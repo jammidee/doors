@@ -52,7 +52,8 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
       The Monitor, CLI and `dir` on A:/C: work. See `devlogs/2026-10-15.md`.
 - [x] Write a smoke-test checklist (`docs/SMOKE_TEST.md`) to use as the acceptance test for the port. All rows
       were run on 32-bit on 2026-10-16. Bugs found are listed there.
-- [ ] Script the passing rows (`tools/boot32/smoke.sh`) so the same check can run against 64-bit.
+- [x] Script the rows: `tools/boot32/smoke.py` (PASS 20, XFAIL 3 on 32-bit). Port it to drive the 64-bit
+      build at M9.
 - [x] Install the toolchain in WSL Ubuntu 22.04: gcc 11.4 (freestanding), nasm, qemu, grub-mkrescue, xorriso,
       mtools, e2fsprogs, gdb.
 
