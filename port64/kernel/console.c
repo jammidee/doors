@@ -4,6 +4,7 @@
 
 #include <stdarg.h>
 #include <doors/console.h>
+#include <doors/kernel.h>
 #include <doors/x86.h>
 
 void console_putc(char c)
@@ -178,5 +179,7 @@ void panic(const char *fmt, ...)
 	vkprintf(fmt, ap);
 	va_end(ap);
 	console_write("\n");
+	if (test_mode)
+		qemu_exit(QEMU_EXIT_FAIL);	/* end `make test` now instead of at its timeout */
 	halt_forever();
 }

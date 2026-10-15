@@ -61,18 +61,24 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
 - [x] Multiboot2 header and 32-bit entry, then build temporary page tables (identity + higher half).
       Set CR4.PAE, EFER.LME, CR0.PG, and do a far jump to 64-bit code. (`port64/boot/boot.asm`: first 1 GiB
       mapped at 0 and at 0xFFFFFFFF80000000 with 2 MiB pages.)
-- [ ] 64-bit GDT: null, kernel code/data, user data/code (ordered for SYSRET), TSS. **Moved to Phase 2**,
-      which needs the TSS for IST stacks; M1 uses a minimal boot GDT (kernel code/data only).
+- [x] 64-bit GDT: null, kernel code/data, user data/code (ordered for SYSRET), TSS. Moved to Phase 2 and
+      done there (`arch/x86_64/gdt.c`); M1 used a minimal boot GDT.
 - [x] VGA text console (TTY output, scrolling, cursor) plus COM1 serial log and `kprintf`.
 - [x] Multiboot2 info: loader name, command line, memory map.
 - [x] `make run` / `make debug` / `make test` (headless, serial log + isa-debug-exit).
 - **Done when:** QEMU shows the "DOORS" 64-bit banner. ✅ 2026-10-16 (`make test`: `DOORS: M1 OK`).
 
 ### Phase 2 — Interrupts and time
-- [ ] 64-bit IDT. Port the exception handlers from `EXCEPT.ASM`, using IST stacks for #DF/#NMI.
-- [ ] Remap the 8259 PIC and add the PIT timer at the original tick rate (`TMRCODE.ASM`); `Sleep`/`Alarm` come later.
-- [ ] Keyboard ISR (`KEYBOARD.ASM`) into a ring buffer.
+- [x] 64-bit IDT (256 vectors, `arch/x86_64/idt.c` + `isr.asm` stubs) with exception register dumps;
+      IST stacks for #DF (IST1) and NMI/#MC (IST2). GDT with user segments ordered for SYSRET, and a TSS.
+- [x] Remap the 8259 PIC (0x20-0x2F, spurious IRQ 7/15 handled) and add the PIT at 100 Hz (10 ms, as
+      `TMRCODE.ASM`). `Sleep`/`Alarm` come with tasks (Phase 4).
+- [x] Keyboard ISR (scan set 1, Shift/Caps) into a ring buffer.
+- [x] Fixed status bar (row 0) with the live tick count, like MMURTL's Monitor.
+- [x] `make test` driven by `tools/qemu_test.py` (types into the guest via the QEMU monitor).
 - **Done when:** the tick counter and typed keys echo on screen, and a deliberate #PF prints a register dump.
+  ✅ 2026-10-16: 100 ticks per RTC second; int3 handled and resumed; "doors" typed and read back;
+  #PF dump with CR2=dead0000 err=2.
 
 ### Phase 3 — Memory management (port `MEMCODE.ASM`)
 - [ ] Physical page allocator from the Multiboot2 memory map, replacing the original's PAM bitmap

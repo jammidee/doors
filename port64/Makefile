@@ -2,8 +2,8 @@
 #
 #   make            build build/kernel.elf and build/doors.iso
 #   make run        boot in QEMU (window; serial log on this terminal)
-#   make test       boot headless; pass if the serial log shows the milestone marker
-#                   and the kernel exits QEMU through isa-debug-exit
+#   make test       boot headless (tools/qemu_test.py); pass if the serial log shows every
+#                   TEST_MARKS string and the kernel exits QEMU through isa-debug-exit
 #   make debug      like run, but QEMU waits for gdb on :1234 (gdb build/kernel.elf -ex 'target remote :1234')
 #   make clean
 #
@@ -34,8 +34,17 @@ TEST_ISO := $(BUILD)/doors-test.iso
 
 QEMU_BASE := -m 256M -no-reboot -no-shutdown
 QEMU_EXTRA ?=
-TEST_MARK := DOORS: M1 OK
-TEST_TIMEOUT := 30
+# Milestone checks for `make test`: kernel/selftest.c prints these lines, tools/qemu_test.py
+# checks them (--expect) and types into the guest when a trigger line appears (--send).
+TEST_TIMEOUT := 60
+TEST_ARGS := \
+	--expect "DOORS: M1 OK" \
+	--expect "M2: timer ok" \
+	--expect "M2: breakpoint ok" \
+	--expect "M2: keyboard ok" \
+	--expect "M2: exception dump ok" \
+	--expect "DOORS: M2 OK" \
+	--send "M2: type doors=doors\n"
 
 .PHONY: all run test debug clean
 
@@ -73,17 +82,7 @@ debug: $(ISO)
 	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) -serial stdio -s -S $(QEMU_EXTRA)
 
 test: $(TEST_ISO)
-	@rm -f $(BUILD)/serial.log
-	@timeout $(TEST_TIMEOUT) $(QEMU) $(QEMU_BASE) -cdrom $(TEST_ISO) -display none \
-		-serial file:$(BUILD)/serial.log \
-		-device isa-debug-exit,iobase=0xf4,iosize=0x04; \
-	rc=$$?; \
-	cat $(BUILD)/serial.log 2>/dev/null; \
-	if [ $$rc -eq 33 ] && grep -q "$(TEST_MARK)" $(BUILD)/serial.log; then \
-		echo "TEST PASS: $(TEST_MARK)"; \
-	else \
-		echo "TEST FAIL (qemu exit $$rc; 124 = timeout)"; exit 1; \
-	fi
+	python3 tools/qemu_test.py --iso $(TEST_ISO) --log $(BUILD)/serial.log --timeout $(TEST_TIMEOUT) $(TEST_ARGS)
 
 clean:
 	rm -rf $(BUILD)

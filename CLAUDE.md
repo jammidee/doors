@@ -68,7 +68,7 @@ cd port64
 make          # build/kernel.elf + build/doors.iso (GRUB, Multiboot2)
 make run      # QEMU window; serial log on the terminal. Add QEMU_EXTRA="-monitor unix:/tmp/doors.mon,server,nowait"
               #   to read the screen with tools/boot32/qscreen.py --sock /tmp/doors.mon
-make test     # headless; passes if the serial log shows the milestone marker (TEST_MARK) and the kernel
+make test     # headless (tools/qemu_test.py); passes if the serial log has every --expect line in TEST_ARGS and the kernel
               #   exits QEMU via isa-debug-exit (status 33). Kernel cmdline "test" enables the exit.
 make debug    # QEMU waits for gdb on :1234
 ```
@@ -77,7 +77,9 @@ make debug    # QEMU waits for gdb on :1234
 - Memory model: kernel linked at `0xFFFFFFFF80000000` (`-mcmodel=kernel`). The boot code is at physical 1 MiB.
   The first 1 GiB is mapped at both 0 and the higher half (`PHYS_TO_VIRT`).
 - Code is freestanding C11 with `-mgeneral-regs-only` (no SSE in the kernel yet) and `-Werror`.
-- Kernel messages go through `kprintf` to the VGA screen and COM1. Update `TEST_MARK` in the Makefile per milestone.
+- Kernel messages go through `kprintf` to the VGA screen and COM1. Each milestone adds self-tests in
+  `kernel/selftest.c` (run on cmdline `test`) and `--expect`/`--send` lines to `TEST_ARGS` in the Makefile.
+- No libc: `kernel/string.c` provides memcpy/memset/strcmp etc. (GCC may emit calls to them itself).
 
 ## Architecture facts that matter for the port
 

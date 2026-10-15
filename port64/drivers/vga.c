@@ -21,11 +21,14 @@ static void update_cursor(void)
 	outb(0x3D5, (U8)(pos >> 8));
 }
 
+/* Row 0 is a fixed status bar (title + tick count); text scrolls in rows 1..24. */
+#define FIRST_ROW 1
+
 static void scroll(void)
 {
 	U32 i;
 
-	for (i = 0; i < (VGA_ROWS - 1) * VGA_COLS; i++)
+	for (i = FIRST_ROW * VGA_COLS; i < (VGA_ROWS - 1) * VGA_COLS; i++)
 		vga[i] = vga[i + VGA_COLS];
 	for (; i < VGA_ROWS * VGA_COLS; i++)
 		vga[i] = (U16)(attr << 8) | ' ';
@@ -43,8 +46,41 @@ void vga_init(void)
 
 	for (i = 0; i < VGA_ROWS * VGA_COLS; i++)
 		vga[i] = (U16)(attr << 8) | ' ';
-	row = col = 0;
+	row = FIRST_ROW;
+	col = 0;
 	update_cursor();
+}
+
+void vga_set_title(const char *title)
+{
+	const U16 a = (U16)((BLUE << 4) | WHITE) << 8;
+	U32 i;
+
+	for (i = 0; i < VGA_COLS; i++)
+		vga[i] = a | (U8)(*title ? *title++ : ' ');
+}
+
+/* Called from the timer interrupt: writes straight into row 0 without moving the cursor. */
+void vga_status_tick(U64 ticks)
+{
+	char num[21];
+	int n = 0, i, col0;
+	const U16 a = (U16)((BLUE << 4) | WHITE) << 8;
+
+	do {
+		num[n++] = (char)('0' + ticks % 10);
+		ticks /= 10;
+	} while (ticks && n < 20);
+
+	col0 = VGA_COLS - 5 - n - 1;
+	vga[col0 + 0] = a | 'T';
+	vga[col0 + 1] = a | 'i';
+	vga[col0 + 2] = a | 'c';
+	vga[col0 + 3] = a | 'k';
+	vga[col0 + 4] = a | ':';
+	for (i = 0; i < n; i++)
+		vga[col0 + 5 + i] = a | (U8)num[n - 1 - i];
+	vga[VGA_COLS - 1] = a | ' ';
 }
 
 void vga_putc(char c)

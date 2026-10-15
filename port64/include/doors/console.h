@@ -16,6 +16,9 @@ void serial_putc(char c);
 void vga_init(void);
 void vga_putc(char c);
 void vga_set_color(enum vga_color fg, enum vga_color bg);
+void vga_status_tick(U64 ticks);	/* "Tick:n" at the top right, like MMURTL's Monitor */
+void vga_set_title(const char *title);	/* row 0 status bar (text scrolls in rows 1..24) */
+void serial_write(const char *s);
 
 void console_putc(char c);
 void console_write(const char *s);
