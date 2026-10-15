@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS jobs: a job is a program with its own address space, its tasks, exchanges and services
    (MMURTL JOBC.C / JOBCODE.ASM job control blocks). Job 1 is the OS/Monitor, job 2 is kept for
    the debugger (as in MMURTL), loaded programs start at job 3.

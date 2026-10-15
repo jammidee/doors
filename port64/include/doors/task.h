@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS tasks and scheduler.
 
    MMURTL switched tasks in hardware (JMP to a TSS selector) and kept the scheduler state in an

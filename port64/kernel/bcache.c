@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Block cache: 512-byte sectors, LRU, write-through (a write goes to the disk before the call
    returns, so the disk is always consistent; a write-back cache can come with journaling, M8).
    Used by the file system service (one task); DeviceOp writes invalidate what they touch. */

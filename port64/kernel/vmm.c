@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* 4-level paging and address spaces.
 
    vmm_init() replaces the boot page tables (boot.asm: first 1 GiB mapped twice with 2 MiB pages)

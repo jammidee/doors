@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Freestanding string/memory functions. GCC may also emit calls to memcpy/memset/memmove/memcmp
    on its own (struct copies, zeroing), so these must exist with the standard names. */
 #ifndef DOORS_STRING_H

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 """Port of MSCODE16/BOOTCODE/MAKEIMG.C: turn the MMURTL OS run file into a boot image.
 
 The image is the OS exactly as it sits in memory after loading at linear 0:

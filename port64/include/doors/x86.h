@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS x86-64 CPU helpers (port I/O, control registers, MSRs). */
 #ifndef DOORS_X86_H
 #define DOORS_X86_H

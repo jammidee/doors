@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Device table and the MMURTL device calls DeviceOp / DeviceStat / DeviceInit (DEVDRVR.ASM). */
 
 #include <doors/blk.h>

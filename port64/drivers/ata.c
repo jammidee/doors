@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* ATA (IDE) hard disk driver, PIO, LBA48 (LBA28 if the drive lacks it).
 
    Replaces MMURTL's HARDIDE.C. Addressing is by LBA only, with the size from IDENTIFY DEVICE,

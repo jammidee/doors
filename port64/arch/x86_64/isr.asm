@@ -1,3 +1,4 @@
+; DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 ; DOORS x86-64 interrupt entry stubs and GDT loading.
 ;
 ; Every vector 0..255 gets a stub that makes the stack look the same (pushing a dummy error code

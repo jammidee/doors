@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 """After `make test`: check, with the host's own FAT tools, what the DOORS kernel wrote to the
 test disk (port64/kernel/selftest.c, M7 and user/progs/fsuser.c).
 

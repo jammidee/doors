@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Request blocks and named system services (MMURTL KERNEL.ASM Request/Respond/MoveRequest,
    RQBCODE.ASM, SVCCODE.ASM). See include/doors/msg.h for the flow.
 

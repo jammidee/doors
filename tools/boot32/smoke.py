@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 """Scripted version of docs/SMOKE_TEST.md for the 32-bit baseline (original MMURTL V1.0 binaries).
 
 Boots a fresh, headless VM with its own images and monitor socket, so it can run alongside an

@@ -1,3 +1,4 @@
+; DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 ; SYSCALL entry and the first entry into ring 3.
 ;
 ; MMURTL user programs called the OS through call gates (CALL FWORD PTR _Name, MPUBLICS.ASM).

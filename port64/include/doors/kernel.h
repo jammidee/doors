@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS kernel-wide state and helpers. */
 #ifndef DOORS_KERNEL_H
 #define DOORS_KERNEL_H

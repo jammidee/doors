@@ -1,3 +1,4 @@
+; DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 ; Fault-safe memory probes.
 ;
 ;   bool probe_read(const void *addr, U64 *val)    true = read ok, *val set

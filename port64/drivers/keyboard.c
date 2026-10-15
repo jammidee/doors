@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* PS/2 keyboard (IRQ 1), scan code set 1 -> ASCII, with Shift and Caps Lock.
    A first step towards MMURTL's keyboard service (KEYBOARD.ASM); key codes for function and
    cursor keys, Ctrl/Alt combinations and the per-job keyboard owner come with the CLI (M9). */

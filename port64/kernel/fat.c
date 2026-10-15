@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* FAT12/16/32 with VFAT long names (replaces MMURTL's FSYS.C, which did FAT12/16 with 8.3 names).
 
    Called only by the FILESYS service task, so there is no locking here. All I/O goes through the

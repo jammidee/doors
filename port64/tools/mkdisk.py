@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 """Build the DOORS test disk: MBR + FAT32 (C:), FAT16 (D:), FAT12 (E:), made with the host's
 mkfs.fat and mtools, so the kernel's FAT code is checked against an independent implementation.
 

@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS user API: the MMURTL system calls with their original names and parameter order
    (MKERNEL.H, MMEMORY.H, MJOB.H, MVID.H). Only types widen: pointers, sizes, messages and
    request handles are 64-bit. Error codes are MMURTL's (doors/erc.h). */

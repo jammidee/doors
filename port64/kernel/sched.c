@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Tasks and the scheduler (MMURTL KERNEL.ASM enQueueRdy/deQueueRdy/ChkRdyQ, TMRCODE.ASM
    IntTimer task check, Sleep; see include/doors/task.h for the rules).
 

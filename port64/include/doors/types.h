@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS common types and helpers. */
 #ifndef DOORS_TYPES_H
 #define DOORS_TYPES_H

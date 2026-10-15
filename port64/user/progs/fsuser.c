@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* fsuser: file calls from ring 3. Reads C:\HELLO.TXT, writes C:\USER.TXT (checked on the host
    after the test), checks that bad buffers are refused, and exits with a file still open (the
    kernel must close it when the job ends). */

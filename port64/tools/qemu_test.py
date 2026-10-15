@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 """Headless QEMU test runner for DOORS milestones (used by `make test`).
 
 Boots the test ISO (kernel cmdline "test") with the serial log in a file, a QEMU monitor socket,

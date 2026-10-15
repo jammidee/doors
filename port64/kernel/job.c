@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Jobs: loading programs, ending jobs (MMURTL JOBC.C LoadNewJob/ExitJob/KillJob,
    JOBCODE.ASM GetJobNum/SetJobName...). See include/doors/job.h.
 

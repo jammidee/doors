@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Milestone self-tests, run with kernel cmdline "test" (make test). Each prints "Mn: ... ok"
    lines to the serial log; the last step exits QEMU with QEMU_EXIT_PASS. Any failure panics,
    which exits QEMU with QEMU_EXIT_FAIL. tools/qemu_test.py drives the steps that need input. */

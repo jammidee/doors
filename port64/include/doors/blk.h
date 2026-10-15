@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS block devices and the MMURTL device driver interface (OSSOURCE/DEVDRVR.ASM, MDEVDRV.H).
 
    Device numbers follow MMURTL: 10/11 = floppy A/B, 12/13 = hard disk 0/1 (here: the ATA primary

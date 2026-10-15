@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS messaging: exchanges, messages, request blocks and named system services.
    A port of MMURTL's kernel primitives (OSSOURCE/KERNEL.ASM, RQBCODE.ASM, SVCCODE.ASM,
    TMRCODE.ASM) with the same names, parameter order and error codes.

@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* hello: the first DOORS user program. Runs in ring 3 in its own job and address space and uses
    the MMURTL calls through SYSCALL. If the kernel's KECHO service is there (make test), it also
    sends it a request with buffers in this job's memory. */

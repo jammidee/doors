@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* spinner: never ends on its own (a second task waits on an exchange forever, the main task
    spins). Used to test KillJob: every task, exchange and page of the job must go away. */
 

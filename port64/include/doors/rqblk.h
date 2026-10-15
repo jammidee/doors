@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Request block layout (MMURTL RQB.INC), shared by the kernel and user-mode services.
    A service receives a handle to one of these with each request and reads its fields directly,
    as MMURTL services did. User-mode services see the request block pool through a read-only

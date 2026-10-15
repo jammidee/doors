@@ -1,3 +1,4 @@
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 # DOORS x86-64 build. Run in WSL/Linux (gcc, nasm, ld, grub-mkrescue, xorriso, qemu).
 #
 #   make            build build/kernel.elf and build/doors.iso

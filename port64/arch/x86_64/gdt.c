@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* 64-bit GDT and TSS.
    In long mode the TSS no longer holds task state (MMURTL's hardware task switching is gone,
    see docs/PORT64_PLAN.md); it only provides RSP0 for ring 3 -> 0 transitions and the

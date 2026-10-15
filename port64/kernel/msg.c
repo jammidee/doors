@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Exchanges, link blocks, messages and timer blocks (MMURTL KERNEL.ASM messaging half and
    TMRCODE.ASM Sleep/Alarm). See include/doors/msg.h for the model.
 

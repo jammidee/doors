@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS user programs: static ELF64, linked at 0x40000000 like MMURTL user code. Explicit
    program headers give each part its own permissions, which the loader maps as such:
    code R+X, read-only data R, data and bss R+W (no execute). */

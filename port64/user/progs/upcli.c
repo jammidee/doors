@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* upcli: a client of the user-mode UPCASE service (upsvc), in another job. */
 
 #include "doors.h"

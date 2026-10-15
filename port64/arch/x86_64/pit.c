@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* 8254 PIT channel 0 as the system tick (MMURTL TMRCODE.ASM: TimerTick, incremented every
    10 ms). The tick count is shown at the top right of the screen, like MMURTL's Monitor. */
 

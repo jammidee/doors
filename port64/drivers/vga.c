@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* VGA 80x25 text console (port of the essentials of OSSOURCE/VIDEO.ASM: TTY output,
    scrolling, hardware cursor). The buffer at physical 0xB8000 is reached via the higher half. */
 

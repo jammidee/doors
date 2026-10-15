@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS kernel entry.
    Called from boot/boot.asm in 64-bit mode on the kernel stack, with paging on and the
    first 1 GiB mapped both at 0 and at KERNEL_VMA. */
@@ -35,6 +36,7 @@ static void banner(void)
 	vga_set_title(title);
 	serial_write(title);
 	serial_write("\n");
+	kprintf("Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines\n");
 	kprintf("Based on MMURTL V1.0 by Richard A. Burgess (public domain)\n\n");
 }
 

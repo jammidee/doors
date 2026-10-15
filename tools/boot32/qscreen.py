@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 """Read the VGA text screen of a running QEMU (or send keys) via its monitor socket.
 
 Usage:

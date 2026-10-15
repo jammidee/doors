@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* System calls from ring 3 (replaces MMURTL's call gates, MPUBLICS.ASM).
 
    Entry: arch/x86_64/syscall.asm. RAX = call number (include/doors/syscalls.def, MMURTL order),

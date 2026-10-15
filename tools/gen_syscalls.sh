@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 # Regenerate port64/include/doors/syscalls.def from MMURTL's call gate table (OSSOURCE/MPUBLICS.ASM).
 # System call number = (gate selector - 40h) / 8.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 {
+	printf '/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */\n'
 	printf '/* DOORS system call numbers, generated from OSSOURCE/MPUBLICS.ASM (MMURTL call gates).\n'
 	printf '   Number = (gate selector - 40h) / 8, so the order and numbering are exactly MMURTL'"'"'s.\n'
 	printf '   Used as an X-macro: #define X(num, name) ...  #include <doors/syscalls.def>\n'

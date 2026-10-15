@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* MMURTL error/status codes (OSSOURCE/MOSEDF.INC, MSTATUS.H). Same numbers, so programs and the
    book stay valid. 0 = ErcOk (types.h). */
 #ifndef DOORS_ERC_H

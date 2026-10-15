@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Multiboot2 boot information parsing: command line, loader name and memory map. */
 
 #include <doors/console.h>

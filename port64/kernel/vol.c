@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Volumes: find partitions on every disk (MBR, or GPT behind a protective MBR, or a disk with
    no partition table that starts with a FAT boot sector) and give them drive letters from C:,
    in disk order (MMURTL FSYS.C read_PE handled only the 4 MBR entries of 2 disks).

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 # Boot the original 32-bit MMURTL V1.0 in QEMU (floppy A: boots the OS, IDE disk is C:).
 # Builds the disk images if missing. A QEMU window opens (WSLg on Windows 11).
 # The monitor socket (default /tmp/mmurtl.mon) lets tools/boot32/qscreen.py read the screen and send keys.

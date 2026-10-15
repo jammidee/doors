@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* CMOS real-time clock (MMURTL GetCMOSTime/GetCMOSDate). Used for FAT timestamps, which MMURTL
    left empty (FSYS.C GetFATTime). Reads until two passes agree, so an update in the middle can't
    give a torn value; handles BCD and binary formats. */

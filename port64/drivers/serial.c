@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* COM1 serial output (16550 UART), 115200 8N1. Used as the kernel debug log from M1 on,
    so failures can be read without the screen (QEMU: -serial stdio / -serial file:...). */
 

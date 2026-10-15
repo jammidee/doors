@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Freestanding string/memory functions (see include/doors/string.h). */
 
 #include <doors/string.h>

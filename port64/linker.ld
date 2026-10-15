@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS x86-64 kernel layout.
  *
  * The boot code (.boot*) is linked and loaded at its physical address (1 MiB), because it runs

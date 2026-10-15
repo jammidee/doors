@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* 64-bit IDT, interrupt dispatch and exception reporting.
    Replaces MMURTL's 32-bit IDT (MOSIDT.ASM) and exception handlers (EXCEPT.ASM). As in MMURTL,
    an unhandled exception shows the faulting registers; here it is a panic until the

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 # Build a bootable 1.44 MB MMURTL V1.0 floppy from the original files.
 #
 # Layout expected by MSCODE16/BOOTCODE/BOOTBLOK.ASM:

@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS x86-64 descriptor tables and interrupt frames. */
 #ifndef DOORS_CPU_H
 #define DOORS_CPU_H

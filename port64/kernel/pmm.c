@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Physical page allocator: one bit per 4 KB page (1 = in use), built from the Multiboot2 memory
    map. MMURTL kept the same kind of bitmap (its PAM, MEMCODE.ASM); here it covers all RAM.
 

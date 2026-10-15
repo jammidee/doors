@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Kernel console: every character goes to both the VGA screen and COM1.
    kprintf supports %c %s %d %i %u %x %X %p %%, the l/ll/z length modifiers,
    a field width and the '0' and '-' flags. */

@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* Multiboot2 boot information (only the tags DOORS uses). */
 #ifndef DOORS_MULTIBOOT2_H
 #define DOORS_MULTIBOOT2_H

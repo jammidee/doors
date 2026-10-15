@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* The FILESYS service and the MMURTL file calls (FSYS.C, MFILES.H).
 
    As in MMURTL, one service task does all file system work, one request at a time (it runs at

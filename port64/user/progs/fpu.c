@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* fpu: floating point / SSE in user mode. Two copies run at once; each keeps doubles in SSE
    registers across Sleep calls and preemption. If task switches didn't save and restore the
    x87/SSE state, the results would mix. */

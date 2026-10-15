@@ -1,3 +1,4 @@
+; DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 ; Software task switch (replaces MMURTL's JMP FWORD PTR [TSS] hardware task switch).
 ;
 ; void switch_to(U64 *save_rsp, U64 new_rsp)

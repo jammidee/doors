@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS kernel console: VGA text screen + COM1 serial, used for all kernel messages. */
 #ifndef DOORS_CONSOLE_H
 #define DOORS_CONSOLE_H

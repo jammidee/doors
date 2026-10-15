@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* MMURTL memory calls (MEMCODE.ASM), same names, parameters and error codes as MMEMORY.H.
 
    AllocOSPage / AllocDMAPage: kernel memory in the OS region, visible to every job.

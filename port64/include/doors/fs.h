@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS file system: volumes (partitions with a drive letter), the FAT driver, and the MMURTL
    file calls (MFILES.H) with the same names and parameter order. Sizes, offsets (LFA) and byte
    counts are 64-bit, so files larger than 4 GB fit the API.

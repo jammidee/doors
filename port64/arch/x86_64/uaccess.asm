@@ -1,3 +1,4 @@
+; DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 ; Copying to and from user memory with fault recovery (see probe.asm / idt.c fault_fixup).
 ;
 ;   U64 user_copy(void *dst, const void *src, U64 n)   returns the number of bytes NOT copied

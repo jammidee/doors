@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* upsvc: a system service written as an ordinary user program (like MSAMPLES/SERVICE).
    Registers "UPCASE  ", reads each request block through the read-only window the kernel gives
    user services, upper-cases pData1 into pData2 (both aliased into this job by the kernel), and

@@ -1,3 +1,4 @@
+;DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 ;INITIAL.JOB - programs DOORS starts at boot (MMURTL: \MMSYS\INITIAL.JOB).
 ;One program name per line; here a name is a GRUB boot module (port64/user/progs/NAME.c).
 ;Comment lines begin with a semicolon.

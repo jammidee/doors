@@ -110,6 +110,12 @@ make debug    # QEMU waits for gdb on :1234
 
 ## Conventions
 
+- **Copyright:** DOORS OS is copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. Every DOORS
+  file (`port64/`, `tools/`, and any new source, header, assembly, linker script, Makefile or script) starts
+  with the line `DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.` in its comment
+  syntax (after a `#!` line if there is one). Burgess's original MMURTL V1.0 files are public domain and keep
+  their own headers.
+
 - Treat original files as the reference. Don't reformat them, rename them, or "modernize" them in place.
   New 64-bit code goes in a separate tree (see the plan). Preserve the copyright headers.
 - `.ASM` files generated from `.C` (FLOPPY, FSYS, HARDIDE, JOBC, MONITOR, PARALLEL, RS232,

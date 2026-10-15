@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS user library: system call stubs (numbers from doors/syscalls.def, so they match MMURTL's
    call gate order), the MMURTL memory helpers, and a small printf on top of TTYOut. */
 

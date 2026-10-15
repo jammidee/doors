@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 # Build a small IDE hard disk image (MBR + one FAT16 partition) for MMURTL V1.0.
 #
 # MMURTL's file system fails to initialise at all without hard disk 0 (Erc 655 from

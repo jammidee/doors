@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* badptr: a misbehaving program. Every bad pointer it hands the kernel must come back as an error
    (never a kernel crash); then it touches unmapped memory itself, and the kernel must end just
    this job (ErcCpuFault + 14) and carry on. */

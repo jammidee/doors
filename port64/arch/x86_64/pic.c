@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* 8259A PIC pair, remapped to vectors 0x20-0x2F (MMURTL's INTCODE.ASM: MaskIRQ, UnMaskIRQ,
    EndOfIRQ). All IRQs start masked; drivers unmask theirs through irq_register(). */
 

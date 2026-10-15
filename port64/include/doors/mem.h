@@ -1,3 +1,4 @@
+/* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS memory management: physical pages, 4-level paging, address spaces, and the MMURTL
    memory calls (OSSOURCE/MEMCODE.ASM, MMEMORY.H) with the same names and parameter order.
    Only types widen: pointers, byte counts and physical addresses are 64-bit. */

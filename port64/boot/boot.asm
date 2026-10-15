@@ -1,3 +1,4 @@
+; DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
 ; DOORS x86-64 boot code.
 ;
 ; GRUB loads the kernel ELF via Multiboot2 and enters _start in 32-bit protected mode
