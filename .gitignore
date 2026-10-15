@@ -1,4 +1,5 @@
 # port64 build output
+build/
 port64/build/
 *.o
 *.elf

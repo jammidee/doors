@@ -7,12 +7,19 @@ protected-mode OS from the book *Developing Your Own 32-bit Operating System* (1
 now public domain). Everything here is DOS-era: 8.3 upper-case filenames, `.BAT` builds,
 tools that run under MS-DOS.
 
-**Active goal:** port MMURTL to x86-64 (long mode). The plan is in
-[docs/PORT64_PLAN.md](docs/PORT64_PLAN.md) — read it before doing any porting work and keep
-its phase checklists up to date. Decisions already made:
+**Active goal:** port MMURTL to x86-64 (long mode). [PLAN.md](PLAN.md) is the execution plan:
+milestones M0–M10, acceptance checks, workflow. [docs/PORT64_PLAN.md](docs/PORT64_PLAN.md) is the
+technical design. Read both before doing any porting work, and keep the milestone table and the phase
+checklists up to date. Decisions already made:
 - Keep every public API name, parameter order and `Erc*` code. Only types widen.
 - Native file system is modern (ext4 subset) behind a VFS. FAT stays for interchange.
   The `MFILES.H` file API is kept, with sizes and offsets widened to 64-bit.
+
+## Dev log
+
+Log your activities in `devlogs/YYYY-MM-DD.md`, one file per day; append if it already exists. Record what was
+done, what was found (bugs, surprises, error codes and their meaning), decisions with their reasons, and
+next steps. Keep it factual and include file:line references and commit hashes.
 
 ## Layout
 
@@ -39,8 +46,12 @@ MAKEALL.BAT     # CM32 each *.C with /L, then DASM MMURTL.ATF /E (runs twice), c
 - `.ATF` files are `.INCLUDE` lists. In `MMURTL.ATF` the first 5 includes
   (`MOSIDT`, `MOSGDT`, `MOSPDR`, `MPUBLICS`, `MAIN`) **must stay in that order**, because
   they fix physical addresses of the IDT, GDT, page directory and call table.
-- Run: boot DOS without EMM386, run `MMSYS\MMLOADER.EXE`. Use DOSBox-X / QEMU / Bochs with a DOS
-  image; `MSCODE16/BOOTCODE/MMURTL.IMG` is a bootable floppy image.
+- **Run it (no DOS needed):** in WSL, run `bash tools/boot32/run.sh [--rebuild]`. It builds a boot floppy (A:)
+  and a FAT16 IDE disk (C:) under `build/boot32/` and opens QEMU in a window.
+  - Read the screen or send keys with `python3 tools/boot32/qscreen.py [--keys "d i r ret"] [--cmd quit]`.
+  - In the Monitor, F1 = load CLI.
+- Shipped boot files are unreliable. `MSCODE16/BOOTCODE/MMURTL.IMG` is an older kernel, and `BOOTSECT.IMG`
+  has a bad BPB. The tools rebuild both from `MMSYS/MMURTL.RUN` and `BOOTBLOK.EXE`. See `devlogs/2026-10-15.md`.
 - There are no tests. Verification means booting it and exercising the CLI.
 
 ## Architecture facts that matter for the port
@@ -70,4 +81,5 @@ MAKEALL.BAT     # CM32 each *.C with /L, then DASM MMURTL.ATF /E (runs twice), c
 - Match surrounding style: tabs, upper-case mnemonics, `;` comments in ASM; K&R-style C.
 - Windows host: shell is PowerShell, with Git Bash also available. Paths in old sources are DOS
   absolute (`c:\cm32\...`).
-- Not yet a git repository. Run `git init` and commit the pristine tree before starting the port.
+- Git: `.gitattributes` stores the original tree byte-for-byte (`-text`). New files under `tools/`, `port64/`
+  and `*.md` use LF.
