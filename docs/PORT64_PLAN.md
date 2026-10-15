@@ -50,7 +50,9 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
 - [x] `git init` and commit the pristine tree (`d775b74`).
 - [x] Boot the original in an emulator: `tools/boot32/run.sh` (QEMU, floppy A: + FAT16 IDE C:).
       The Monitor, CLI and `dir` on A:/C: work. See `devlogs/2026-10-15.md`.
-- [ ] Write a smoke-test checklist (`docs/SMOKE_TEST.md`) to use as the acceptance test for the port.
+- [x] Write a smoke-test checklist (`docs/SMOKE_TEST.md`) to use as the acceptance test for the port. All rows
+      were run on 32-bit on 2026-10-16. Bugs found are listed there.
+- [ ] Script the passing rows (`tools/boot32/smoke.sh`) so the same check can run against 64-bit.
 - [x] Install the toolchain in WSL Ubuntu 22.04: gcc 11.4 (freestanding), nasm, qemu, grub-mkrescue, xorriso,
       mtools, e2fsprogs, gdb.
 
