@@ -36,7 +36,7 @@ QEMU_BASE := -m 256M -no-reboot -no-shutdown
 QEMU_EXTRA ?=
 # Milestone checks for `make test`: kernel/selftest.c prints these lines, tools/qemu_test.py
 # checks them (--expect) and types into the guest when a trigger line appears (--send).
-TEST_TIMEOUT := 60
+TEST_TIMEOUT := 120
 TEST_ARGS := \
 	--expect "DOORS: M1 OK" \
 	--expect "M2: timer ok" \
@@ -77,6 +77,13 @@ TEST_ARGS := \
 	--expect "M6: KillJob ok" \
 	--expect "M6: no leaks" \
 	--expect "DOORS: M6 OK" \
+	--expect "M7: disk ok" \
+	--expect "M7: FAT read ok" \
+	--expect "M7: FAT write ok" \
+	--expect "M7: LoadNewJob from a file ok" \
+	--expect "fsuser: all file calls from ring 3 ok" \
+	--expect "M7: file calls from ring 3 ok" \
+	--expect "DOORS: M7 OK" \
 	--send "M2: type doors=doors\n" \
 	--send "M5: type msg=msg\n"
 
@@ -134,14 +141,26 @@ $(ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 $(TEST_ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 	$(call mkiso,$@,test)
 
-run: $(ISO)
-	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) -serial stdio $(QEMU_EXTRA)
+# Disks: `make run` keeps build/disk.img between runs (delete it for a fresh one); `make test`
+# builds a fresh build/disk-test.img, and tools/check_disk.py checks it with fsck.fat/mtools after.
+DISK      := $(BUILD)/disk.img
+TEST_DISK := $(BUILD)/disk-test.img
+QEMU_DISK  = -drive file=$(1),format=raw,if=ide,index=0 -boot d
 
-debug: $(ISO)
-	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) -serial stdio -s -S $(QEMU_EXTRA)
+$(DISK): $(BUILD)/user/hello.elf tools/mkdisk.py
+	python3 tools/mkdisk.py $@ --hello $(BUILD)/user/hello.elf
 
-test: $(TEST_ISO)
-	python3 tools/qemu_test.py --iso $(TEST_ISO) --log $(BUILD)/serial.log --timeout $(TEST_TIMEOUT) $(TEST_ARGS)
+run: $(ISO) $(DISK)
+	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio $(QEMU_EXTRA)
+
+debug: $(ISO) $(DISK)
+	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio -s -S $(QEMU_EXTRA)
+
+test: $(TEST_ISO) $(USER_ELFS)
+	python3 tools/mkdisk.py $(TEST_DISK) --hello $(BUILD)/user/hello.elf
+	python3 tools/qemu_test.py --iso $(TEST_ISO) --disk $(TEST_DISK) --log $(BUILD)/serial.log \
+		--timeout $(TEST_TIMEOUT) $(TEST_ARGS)
+	python3 tools/check_disk.py $(TEST_DISK)
 
 clean:
 	rm -rf $(BUILD)

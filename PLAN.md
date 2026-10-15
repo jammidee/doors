@@ -41,7 +41,7 @@ Each milestone has a demo (what you'll see) and acceptance checks (what must pas
 | M4 | **Tasks** ✅ | Two kernel tasks at different priorities interleaving | Preemption and priority order match the 32-bit scheduler on the same scenario |
 | M5 | **Messaging** ✅ | Test service answering `Request`s | Host unit tests + in-kernel IPC tests for every primitive (`SendMsg`…`MoveRequest`) |
 | M6 | **User mode & jobs** ✅ | Ring-3 ELF "hello" job started from `INITIAL.JOB` | Bad pointers return errors (no kernel crash); jobs exit and free all memory |
-| M7 | **Disks & FAT** | `dir` of a FAT image from a test job | Read/write FAT12/16/32 matches host `mtools` view of the same image |
+| M7 | **Disks & FAT** ✅ | `dir` of a FAT image from a test job | Read/write FAT12/16/32 matches host `mtools` view of the same image |
 | M8 | **ext4** | Boot with ext4 root; long names; >4 GB file | Random stress test, then host `e2fsck -fn` reports clean, run repeatedly |
 | M9 | **User land** | Monitor + CLI + editor running on 64-bit | `docs/SMOKE_TEST.md` passes on 64-bit, same as on 32-bit |
 | M10 | **Optional** | — | Debugger/disassembler, 64-bit CM32/DASM, UEFI, APIC, SMP |

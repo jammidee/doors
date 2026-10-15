@@ -255,3 +255,27 @@ int printf(const char *fmt, ...)
 	flush(&o);
 	return o.total;
 }
+
+/* ---- file system (MFILES.H) ---- */
+
+erc_t OpenFile(const char *n, U32 cb, U32 mode, U32 stream, U32 *ph)
+					{ return CALL(OpenFile, A(n), cb, mode, stream, A(ph)); }
+erc_t CloseFile(U32 h)			{ return CALL(CloseFile, h); }
+erc_t CreateFile(const char *n, U32 cb, U32 attr)	{ return CALL(CreateFile, A(n), cb, attr); }
+erc_t DeleteFile(U32 h)			{ return CALL(DeleteFile, h); }
+erc_t RenameFile(const char *a, U32 ca, const char *b, U32 cb)
+					{ return CALL(RenameFile, A(a), ca, A(b), cb); }
+erc_t CreateDir(const char *n, U32 cb)	{ return CALL(CreateDir, A(n), cb, 0); }
+erc_t DeleteDir(const char *n, U32 cb)	{ return CALL(DeleteDir, A(n), cb, 0); }
+erc_t ReadBytes(U32 h, U8 *p, U64 n, U64 *pn)	{ return CALL(ReadBytes, h, A(p), n, A(pn)); }
+erc_t WriteBytes(U32 h, const U8 *p, U64 n, U64 *pn)	{ return CALL(WriteBytes, h, A(p), n, A(pn)); }
+erc_t ReadBlock(U32 h, U8 *p, U64 n, U64 lfa, U64 *pn)	{ return CALL(ReadBlock, h, A(p), n, lfa, A(pn)); }
+erc_t WriteBlock(U32 h, const U8 *p, U64 n, U64 lfa, U64 *pn)
+					{ return CALL(WriteBlock, h, A(p), n, lfa, A(pn)); }
+erc_t GetFileSize(U32 h, U64 *p)	{ return CALL(GetFileSize, h, A(p)); }
+erc_t SetFileSize(U32 h, U64 s)		{ return CALL(SetFileSize, h, s); }
+erc_t GetFileLFA(U32 h, U64 *p)		{ return CALL(GetFileLFA, h, A(p)); }
+erc_t SetFileLFA(U32 h, U64 lfa)	{ return CALL(SetFileLFA, h, lfa); }
+erc_t GetDirSector(const char *p, U32 cb, U8 *s, U32 ss, U32 n)
+					{ return CALL(GetDirSector, A(p), cb, A(s), ss, n); }
+erc_t GetSystemDisk(U8 *p)		{ return CALL(GetSystemDisk, A(p)); }

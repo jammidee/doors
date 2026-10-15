@@ -50,6 +50,28 @@ erc_t SetJobName(const char *pName, U32 dcbName);
 erc_t SetCmdLine(const char *pCmd, U32 dcbCmd);
 erc_t GetCmdLine(char *pCmdRet, U32 *pdcbCmdRet);
 
+/* file system (MFILES.H): 64-bit sizes and file positions (LFA) */
+#define ModeRead   0
+#define ModeModify 1
+erc_t OpenFile(const char *pName, U32 cbName, U32 Mode, U32 fStream, U32 *pdHandleRet);
+erc_t CloseFile(U32 dHandle);
+erc_t CreateFile(const char *pName, U32 cbName, U32 Attrib);
+erc_t DeleteFile(U32 dHandle);
+erc_t RenameFile(const char *pCrntName, U32 cbCrntName, const char *pNewName, U32 cbNewName);
+erc_t CreateDir(const char *pName, U32 cbName);
+erc_t DeleteDir(const char *pName, U32 cbName);
+erc_t ReadBytes(U32 dHandle, U8 *pBytesRet, U64 nBytes, U64 *pdBytesRet);
+erc_t WriteBytes(U32 dHandle, const U8 *pBytes, U64 nBytes, U64 *pdBytesRet);
+erc_t ReadBlock(U32 dHandle, U8 *pBytesRet, U64 nBytes, U64 dLFA, U64 *pdnBytesRet);
+erc_t WriteBlock(U32 dHandle, const U8 *pData, U64 nBytes, U64 dLFA, U64 *pdnBytesRet);
+erc_t GetFileSize(U32 dHandle, U64 *pdSizeRet);
+erc_t SetFileSize(U32 dHandle, U64 dSize);
+erc_t GetFileLFA(U32 dHandle, U64 *pdLFARet);
+erc_t SetFileLFA(U32 dHandle, U64 dLFA);
+erc_t GetDirSector(const char *pPathSpec, U32 cbPathSpec, U8 *pSectorRet, U32 sSectorRet,
+		   U32 SectorNum);
+erc_t GetSystemDisk(U8 *pDiskRet);
+
 /* video (MVID.H) */
 erc_t TTYOut(const char *pTextOut, U64 ddTextOut, U32 ddAttrib);
 

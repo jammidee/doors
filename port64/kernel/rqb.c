@@ -101,6 +101,19 @@ void rqb_dispose(U64 h)
 	n_rqb_free++;
 }
 
+static bool writable(U32 job, U8 *p, U64 cb)
+{
+	struct addr_space *as = job_space(job);
+	U64 va = (U64)(uintptr_t)p & PAGE_MASK, end = (U64)(uintptr_t)p + cb, pte;
+
+	if (!p || !cb || (U64)(uintptr_t)p >= 0xFFFF800000000000UL)
+		return true;		/* nothing to check / kernel memory (kernel requesters only) */
+	for (; as && va < end; va += PAGE_SIZE)
+		if (!vmm_translate(as, va, NULL, &pte) || !(pte & PTE_W))
+			return false;
+	return as != NULL;
+}
+
 /* Service side (task context, interrupts on), from WaitMsg/CheckMsg: map the requester's buffers
    into this job and put the alias addresses into the RqBlk, as MMURTL's WaitMsg did. */
 erc_t rqb_received(U64 h)
@@ -112,6 +125,11 @@ erc_t rqb_received(U64 h)
 		return ErcNotRqBlk;
 	if (r->orphan || job_space(r->RqOwnerJob) == current_space)
 		return ErcOk;		/* requester gone, or same address space: nothing to alias */
+	/* Receive buffers (after the first npSend) are written by the service: every page must be
+	   writable in the requester's space, or a service in ring 0 would fault writing it. */
+	if ((r->npSend < 1 && !writable(r->RqOwnerJob, r->pOrig1, r->cbData1)) ||
+	    (r->npSend < 2 && !writable(r->RqOwnerJob, r->pOrig2, r->cbData2)))
+		return ErcBadLinAdd;
 	if (r->cbData1 && r->pData1) {
 		erc = AliasMem(r->pOrig1, r->cbData1, r->RqOwnerJob, &r->pData1);
 		if (erc)

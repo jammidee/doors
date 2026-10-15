@@ -156,12 +156,18 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
   KillJob of a 2-task job, 0 leaks over 6 jobs.
 
 ### Phase 7 — Drivers and file system (C sources port fairly directly)
-- [ ] Device driver interface (`DEVDRVR.ASM`, `MDEVDRV.H`): `InitDevDr`, `DeviceOp`, `DeviceStat`, `DeviceInit`.
-- [ ] ISA DMA (`DMACODE.ASM`), floppy (`FLOPPY.C`), IDE PIO (`HARDIDE.C`), RS232, parallel.
-      Mostly type fixes (`long` vs pointer, `far`), plus port I/O through inline-asm helpers.
-- [ ] Block cache plus partition table (MBR and GPT) under the file system.
-- [ ] Virtio-blk or AHCI driver. A modern FS implies large disks, and PIO IDE stays only for compatibility.
-- **Done when:** sectors on a GPT-partitioned QEMU disk can be read and written through the block cache.
+- [x] Device interface (`kernel/device.c`, `include/doors/blk.h`): `DeviceOp`, `DeviceStat`, `DeviceInit`
+      with MMURTL's device numbers (12/13 = hard disk 0/1) and ops (1 read, 2 write, 3 verify); 64-bit LBA.
+      `InitDevDr` → drivers register themselves (no loadable drivers, as in MMURTL).
+- [x] IDE: new ATA PIO driver (`drivers/ata.c`): LBA48/LBA28, size from IDENTIFY (no CHS, so none of the
+      baseline's geometry trouble), polled, a kmutex per channel, ATAPI skipped. Replaces `HARDIDE.C`.
+- [ ] Floppy, ISA DMA, RS232, parallel → later (not needed for the file system; floppy images can be
+      superfloppy FAT volumes on any disk).
+- [x] Block cache (`kernel/bcache.c`, 512 KB LRU, write-through) and partitions (`kernel/vol.c`): MBR, GPT
+      behind a protective MBR, superfloppy FAT; drive letters from C:.
+- [ ] Virtio-blk / AHCI and interrupt-driven I/O → with ext4 (M8) or later; PIO is fine for QEMU tests.
+- **Done when:** sectors on a QEMU disk can be read and written through the block cache. ✅ 2026-10-16
+  (MBR disk; GPT parsing is in place but not yet exercised by a test).
 
 ### Phase 7b — File system
 The file system service keeps the original MMURTL API from `MFILES.H` with the same names and parameter order:
@@ -174,13 +180,18 @@ The file system service keeps the original MMURTL API from `MFILES.H` with the s
 - `GetDirSector` is FAT-specific. Keep it for compatibility on FAT volumes. On ext4 it returns entries in a
   generic record format. Add `ReadDir(handle, pEntriesRet, cbMax, pcbRet)` as a new call at the end of the
   syscall table (new calls go after the original ones, so numbering is unchanged).
-- `DeleteDir`, which the original never finished (`PROBLEMS.TXT` 2a), gets implemented.
+- `DeleteDir`, which the original never finished (`PROBLEMS.TXT` 2a), gets implemented. ✅ (M7)
 
 Steps:
-- [ ] VFS layer: mount table, path resolution, vnode/inode cache, open-file table per job. `FSYS` service
-      becomes the VFS front end and still runs as a registered service at the same service name.
-- [ ] FAT driver: port `FSYS.C` (FAT12/16), add FAT32 and VFAT long names. Used for floppies, USB images and
-      data exchange with the host. Consider the "updated filesystem" mentioned in `PROBLEMS.TXT` item 4.
+- [~] VFS layer. M7 has the service and handle table (`kernel/fsys.c`: FILESYS service at priority 5 as in
+      MMURTL, per-job handles, MMURTL sharing rules, files closed at job end) on top of FAT directly.
+      **M8:** a volume-ops table, so ext4 plugs in next to FAT.
+- [x] FAT driver (`kernel/fat.c`): FAT12/16/32 by cluster count, VFAT long names (read and create, with
+      `NAME~N` aliases), case-insensitive paths with `.`/`..`, create/delete/rename/move (fixing `..`),
+      mkdir/rmdir, byte-exact stream and block I/O, truncate/extend, RTC timestamps, all FAT copies
+      updated, FAT32 FSInfo marked unknown. Checked by `fsck.fat` after every `make test`.
+- [x] All `MFILES.H` calls (sizes/LFA 64-bit) from the kernel and from ring 3; `LoadNewJob` loads ELF files
+      by path; `GetSystemDisk`.
 - [ ] ext4 read-only: superblock, block group descriptors (64-bit), inodes, extent trees, linear and
       htree directories, checksums (metadata_csum) verified on read.
 - [ ] ext4 read/write: block and inode allocation, extent insert/split, directory insert/delete, rename,

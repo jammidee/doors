@@ -50,6 +50,7 @@ def main():
                     help="TRIGGER=TEXT: when TRIGGER appears in the log, type TEXT ('\\n' = Enter)")
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--qemu", default="qemu-system-x86_64")
+    ap.add_argument("--disk", help="raw disk image attached as the ATA primary master")
     a = ap.parse_args()
 
     sock = f"/tmp/doors-test-{os.getpid()}.mon"
@@ -66,6 +67,8 @@ def main():
     cmd = [a.qemu, "-m", "256M", "-no-reboot", "-display", "none", "-cdrom", a.iso,
            "-serial", "file:" + live, "-monitor", f"unix:{sock},server,nowait",
            "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]
+    if a.disk:
+        cmd += ["-drive", f"file={a.disk},format=raw,if=ide,index=0", "-boot", "d"]
     q = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     start = time.time()
     rc = None

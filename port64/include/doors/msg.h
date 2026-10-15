@@ -56,6 +56,15 @@ erc_t Request(const char *pSvcName, U32 wSvcCode, U32 dRespExch, U64 *pRqHndlRet
 erc_t Respond(U64 dRqHndl, U32 dStatRet);
 erc_t MoveRequest(U64 dRqBlkHndl, U32 DestExch);
 
+/* Kernel mutex the MMURTL way: an exchange holding one token message. lock = WaitMsg (blocks
+   while another task holds it), unlock = SendMsg. Task context only. */
+struct kmutex {
+	U32 exch;
+};
+void kmutex_init(struct kmutex *m);
+void kmutex_lock(struct kmutex *m);
+void kmutex_unlock(struct kmutex *m);
+
 /* ---- kernel internal ---- */
 enum { LB_DATA, LB_REQ, LB_RESP, LB_REQA };	/* MMURTL DATALB, REQLB, RESPLB, REQLBA (aliased) */
 

@@ -13,7 +13,6 @@
 #define MAX_JOBS     64
 #define FIRST_USER_JOB 3
 #define ErcBadRunFile 74		/* not a run file (here: not a valid ELF64 program) */
-#define ErcNoSuchFile 203		/* no such file (here: no such boot module) */
 #define ErcCpuFault   1000		/* DOORS: job ended by CPU exception n -> 1000 + n */
 
 struct cpu_regs;

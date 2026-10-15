@@ -4,6 +4,8 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/blk.h>
+#include <doors/fs.h>
 #include <doors/job.h>
 #include <doors/kernel.h>
 #include <doors/mem.h>
@@ -56,6 +58,70 @@ static void read_boot_info(U64 mbi_phys)
 
 /* ---- interactive mode: a tiny line monitor to try the M2 features by hand ---- */
 
+/* "dir": read a directory with MMURTL's GetDirSector and print its entries, long names
+   included (assembled from the VFAT entries before each 8.3 entry). */
+static void list_dir(const char *path)
+{
+	static U8 sec[512];
+	static const U8 pos[13] = { 1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30 };
+	char lfn[256];
+	U32 s, i, k, files = 0;
+	bool have_lfn = false;
+	erc_t e;
+
+	for (s = 0; (e = GetDirSector(path, (U32)strlen(path), sec, sizeof(sec), s)) == ErcOk; s++) {
+		for (i = 0; i < 512; i += 32) {
+			U8 *d = sec + i;
+			char sn[13];
+			U32 n = 0;
+
+			if (!d[0])
+				goto done;
+			if (d[0] == 0xE5) {
+				have_lfn = false;
+				continue;
+			}
+			if ((d[11] & 0x3F) == ATTR_LFN) {
+				U32 ord = d[0] & 0x3F;
+
+				if (d[0] & 0x40) {
+					memset(lfn, 0, sizeof(lfn));
+					have_lfn = true;
+				}
+				for (k = 0; k < 13 && ord && (ord - 1) * 13 + k < sizeof(lfn) - 1; k++) {
+					U16 u = (U16)(d[pos[k]] | (d[pos[k] + 1] << 8));
+
+					if (u && u != 0xFFFF)
+						lfn[(ord - 1) * 13 + k] = u < 128 ? (char)u : '?';
+				}
+				continue;
+			}
+			if (d[11] & ATTR_VOLUME) {
+				have_lfn = false;
+				continue;
+			}
+			for (k = 0; k < 8 && d[k] != ' '; k++)
+				sn[n++] = (char)d[k];
+			if (d[8] != ' ')
+				sn[n++] = '.';
+			for (k = 8; k < 11 && d[k] != ' '; k++)
+				sn[n++] = (char)d[k];
+			sn[n] = 0;
+			kprintf("%-12s %10u  %04u-%02u-%02u  %s  %s\n", sn,
+				(U32)(d[28] | (d[29] << 8) | (d[30] << 16) | ((U32)d[31] << 24)),
+				1980 + (d[25] >> 1), ((d[25] & 1) << 3) | (d[24] >> 5), d[24] & 31,
+				(d[11] & ATTR_DIR) ? "<DIR>" : "     ", have_lfn ? lfn : "");
+			have_lfn = false;
+			files++;
+		}
+	}
+done:
+	if (e && e != ErcNoMatch)
+		kprintf("GetDirSector: error %u\n", e);
+	else
+		kprintf("%u entries\n", files);
+}
+
 /* Busy task for "spin": burns CPU (never yields) for the given number of ticks, then exits. */
 static void spin_task(void *ticks)
 {
@@ -77,6 +143,8 @@ static void cmd(const char *line)
 			"spin   start two busy tasks for 3 s (watch time slicing in 'tasks')\n"
 			"run X  load boot module X as a new job (LoadNewJob)\n"
 			"jobs   list jobs;  kill N  end job N (KillJob)\n"
+			"vols   volumes;  dir C:\\PATH  list a directory;  type C:\\FILE  show a file\n"
+			"run C:\\BIN\\HELLO.ELF  load a program from a file\n"
 			"int3   breakpoint exception (handled, execution continues)\n"
 			"pf     page fault at 0xdead0000 (register dump + panic)\n"
 			"div0   divide error (register dump + panic)\n");
@@ -130,6 +198,33 @@ static void cmd(const char *line)
 			kprintf("LoadNewJob: error %u\n", e);
 		else
 			kprintf("Loaded %s as job %u\n", line + 4, job);
+	} else if (!strcmp(line, "vols")) {
+		U32 i;
+		struct volume *v;
+
+		for (i = 0; (v = vol_index(i)); i++)
+			kprintf("%c:  disk %u part %u  %5lu MB  %s  %s\n", v->letter, v->dev->devnum,
+				v->part, v->nsectors >> 11,
+				v->kind == VOL_FAT32 ? "FAT32" : v->kind == VOL_FAT16 ? "FAT16" :
+				v->kind == VOL_FAT12 ? "FAT12" : v->kind == VOL_LINUX ? "Linux" : "?",
+				v->label);
+	} else if (!strncmp(line, "dir ", 4)) {
+		list_dir(line + 4);
+	} else if (!strncmp(line, "type ", 5)) {
+		static U8 buf[512];
+		U32 h;
+		U64 n;
+		erc_t e = OpenFile(line + 5, (U32)strlen(line + 5), ModeRead, 1, &h);
+
+		if (e) {
+			kprintf("OpenFile: error %u\n", e);
+		} else {
+			do {
+				e = ReadBytes(h, buf, sizeof(buf), &n);
+				console_write_n((const char *)buf, n);
+			} while (!e && n);
+			CloseFile(h);
+		}
 	} else if (!strcmp(line, "jobs")) {
 		U32 j;
 
@@ -239,6 +334,12 @@ void kmain(U32 magic, U64 mbi_phys)
 	kprintf("Interrupts: GDT+TSS (IST for #DF/NMI), IDT 256 vectors, PIC 0x20-0x2F, "
 		"PIT %u Hz, keyboard IRQ1\n", TICK_HZ);
 	kprintf("DOORS: M1 OK\n");
+
+	/* Disks and files (timeouts need the timer, so after sti) */
+	bc_init();
+	ata_init();
+	vol_init();
+	fsys_init();
 
 	if (test_mode)
 		selftest_run();

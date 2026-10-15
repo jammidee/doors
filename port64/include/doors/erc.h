@@ -38,7 +38,43 @@
 #define ErcShortMem     109	/* fewer valid pages than requested were deallocated */
 #define ErcBadAlias     111	/* address passed in wasn't an alias */
 
-/* 200-299: file system (MSTATUS.H) — used from M7 on */
+/* 200-299: file system (MSTATUS.H) */
+#define ErcBadFileSpec  200	/* invalid file spec (not correct format) */
+#define ErcNoSuchDrive  201	/* no such drive letter */
+#define ErcNotAFile     202	/* tried to open a directory */
+#define ErcNoSuchFile   203
+#define ErcNoSuchDir    204
+#define ErcReadOnly     205	/* file or handle not open for modify */
+#define ErcNoFreeFCB    206	/* too many open files */
+#define ErcBadOpenMode  207
+#define ErcFileInUse    208	/* open in an incompatible mode */
+#define ErcNoFreeFUB    209
+#define ErcBadFileHandle 210
+#define ErcBrokenFile   211	/* cluster chain broken */
+#define ErcBadFCB       213
+#define ErcStreamFile   214	/* not allowed on a stream file */
+#define ErcBlockFile    215	/* not allowed on a block file */
+#define ErcBeyondEOF    217	/* SetFileLFA or ReadBlock/WriteBlock beyond EOF */
+#define ErcNoParTable   218	/* no partition table */
+#define ErcBadFATClstr  220	/* file system damaged */
+#define ErcRenameDrv    222	/* rename across volumes */
+#define ErcRenameDir    223
+#define ErcNoMatch      224	/* no matching directory entry / sector */
+#define ErcWriteOnly    225
+#define ErcDupName      226	/* name exists as a file or directory already */
 #define ErcNotSupported 227	/* not supported (DOORS also uses it for not-yet-ported features) */
+#define ErcRootFull     228	/* FAT12/16 root directory full */
+#define ErcDiskFull     230	/* no more free clusters */
+#define ErcDirFull      231
+#define ErcDirNotEmpty  232	/* DOORS: DeleteDir of a non-empty directory (MMURTL never finished it) */
+
+/* 500-599: device management (MSTATUS.H) */
+#define ErcBadDevNum    500	/* device number too large */
+#define ErcDevInUse     501
+#define ErcBadOpNum     503	/* operation the driver doesn't handle */
+#define ErcNoDevice     504	/* driver installed but no device */
+#define ErcNoDriver     505	/* no driver for that device number */
+#define ErcDevTimeOut   508	/* DOORS: the device didn't answer in time */
+#define ErcDevError     509	/* DOORS: the device reported an error */
 
 #endif

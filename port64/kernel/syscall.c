@@ -15,6 +15,7 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/fs.h>
 #include <doors/job.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
@@ -272,6 +273,105 @@ U64 syscall_dispatch(U64 n, U64 uargs)
 		if ((erc = copy_in(cmd, a[0], a[1])))
 			return erc;
 		return SetCmdLine(cmd, (U32)a[1]);
+	}
+	/* ---- file system (MFILES.H). Paths are copied in; data buffers are checked and passed
+	   on, the FILESYS service reaches them through its request's aliases. ---- */
+	case SYS_OpenFile: {
+		char path[MAX_PATH];
+
+		ARGS(5);
+		if (a[1] >= MAX_PATH)
+			return ErcBadFileSpec;
+		if ((erc = copy_in(path, a[0], a[1])))
+			return erc;
+		if (!urange(a[4], 4))
+			return a[4] ? ErcBadLinAdd : ErcNullPtr;
+		erc = OpenFile(path, (U32)a[1], (U32)a[2], (U32)a[3], &v32);
+		if (!erc && (erc = out_u32(a[4], v32)))
+			CloseFile(v32);
+		return erc;
+	}
+	case SYS_CloseFile:
+		ARGS(1);
+		return CloseFile((U32)a[0]);
+	case SYS_DeleteFile:
+		ARGS(1);
+		return DeleteFile((U32)a[0]);
+	case SYS_CreateFile:
+	case SYS_CreateDir:
+	case SYS_DeleteDir: {
+		char path[MAX_PATH];
+
+		ARGS(3);
+		if (a[1] >= MAX_PATH)
+			return ErcBadFileSpec;
+		if ((erc = copy_in(path, a[0], a[1])))
+			return erc;
+		if (n == SYS_CreateFile)
+			return CreateFile(path, (U32)a[1], (U32)a[2]);
+		return n == SYS_CreateDir ? CreateDir(path, (U32)a[1]) : DeleteDir(path, (U32)a[1]);
+	}
+	case SYS_RenameFile: {
+		char from[MAX_PATH], to[MAX_PATH];
+
+		ARGS(4);
+		if (a[1] >= MAX_PATH || a[3] >= MAX_PATH)
+			return ErcBadFileSpec;
+		if ((erc = copy_in(from, a[0], a[1])) || (erc = copy_in(to, a[2], a[3])))
+			return erc;
+		return RenameFile(from, (U32)a[1], to, (U32)a[3]);
+	}
+	case SYS_ReadBytes:
+	case SYS_WriteBytes:
+		ARGS(4);
+		if (!ubuf_ok(a[1], a[2]) || !urange(a[3], 8))
+			return ErcBadLinAdd;
+		erc = n == SYS_ReadBytes ? ReadBytes((U32)a[0], (U8 *)(uintptr_t)a[1], a[2], &h) :
+			WriteBytes((U32)a[0], (const U8 *)(uintptr_t)a[1], a[2], &h);
+		out_u64(a[3], h);
+		return erc;
+	case SYS_ReadBlock:
+	case SYS_WriteBlock:
+		ARGS(5);
+		if (!ubuf_ok(a[1], a[2]) || !urange(a[4], 8))
+			return ErcBadLinAdd;
+		erc = n == SYS_ReadBlock ? ReadBlock((U32)a[0], (U8 *)(uintptr_t)a[1], a[2], a[3], &h) :
+			WriteBlock((U32)a[0], (const U8 *)(uintptr_t)a[1], a[2], a[3], &h);
+		out_u64(a[4], h);
+		return erc;
+	case SYS_GetFileSize:
+	case SYS_GetFileLFA:
+		ARGS(2);
+		if (!urange(a[1], 8))
+			return a[1] ? ErcBadLinAdd : ErcNullPtr;
+		erc = n == SYS_GetFileSize ? GetFileSize((U32)a[0], &h) : GetFileLFA((U32)a[0], &h);
+		if (!erc)
+			erc = out_u64(a[1], h);
+		return erc;
+	case SYS_SetFileSize:
+		ARGS(2);
+		return SetFileSize((U32)a[0], a[1]);
+	case SYS_SetFileLFA:
+		ARGS(2);
+		return SetFileLFA((U32)a[0], a[1]);
+	case SYS_GetDirSector: {
+		char path[MAX_PATH];
+
+		ARGS(5);
+		if (a[1] >= MAX_PATH)
+			return ErcBadFileSpec;
+		if ((erc = copy_in(path, a[0], a[1])))
+			return erc;
+		if (a[3] < 512 || !urange(a[2], 512))
+			return ErcBadLinAdd;
+		return GetDirSector(path, (U32)a[1], (U8 *)(uintptr_t)a[2], 512, (U32)a[4]);
+	}
+	case SYS_GetSystemDisk: {
+		U8 d;
+
+		ARGS(1);
+		GetSystemDisk(&d);
+		return copy_out(a[0], &d, 1);
 	}
 	default:
 		return ErcBadCallGate;

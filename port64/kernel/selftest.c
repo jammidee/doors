@@ -4,6 +4,8 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/blk.h>
+#include <doors/fs.h>
 #include <doors/job.h>
 #include <doors/kernel.h>
 #include <doors/mem.h>
@@ -640,7 +642,8 @@ static void test_request(void)
 	DeAllocExch(resp);
 	Sleep(2);
 	msg_get_stats(&s);
-	CHECK(s.rqb_free == m5_base.rqb_free && !s.svc_used, "request blocks or services leaked");
+	CHECK(s.rqb_free == m5_base.rqb_free && s.svc_used == m5_base.svc_used,
+	      "request blocks or services leaked");
 	kprintf("M5: Request/Respond ok (NUMBERS service; dData0-2 = 7,8,9 intact; error codes)\n");
 }
 
@@ -734,25 +737,25 @@ static void test_cross_job(void)
 	struct addr_space *a = vmm_space_create(2), *b = vmm_space_create(3);
 	struct msg_stats s;
 	erc_t e;
-	U32 waited;
+	U32 waited, n0 = task_count();	/* kmain, idle and system services */
 
 	CHECK(a && b, "vmm_space_create failed");
 	task_create("up-svc", upcase_service, NULL, 15, 3, &e);
 	CHECK(up_ready, "UPCASE service did not start");
 	task_create("up-client", upcase_client, NULL, 18, 2, &e);
-	for (waited = 0; task_count() > 2 && waited < 300; waited++)	/* kmain + idle left */
+	for (waited = 0; task_count() > n0 && waited < 300; waited++)
 		Sleep(1);
 	CHECK(up_done, "cross-job request failed or returned wrong data");
 	CHECK(up_alias_ok, "service did not see the client's buffer through an alias");
 	CHECK(up_move_checked, "MoveRequest to another job's exchange was not refused");
 	CHECK(up_alias_gone, "alias still mapped after Respond");
-	CHECK(task_count() == 2, "tasks left over: %u", task_count());
+	CHECK(task_count() == n0, "tasks left over: %u, expected %u", task_count(), n0);
 
 	vmm_space_destroy(a);
 	vmm_space_destroy(b);
 	msg_get_stats(&s);
 	CHECK(s.exch_free == m5_base.exch_free && s.lb_free == m5_base.lb_free &&
-	      s.rqb_free == m5_base.rqb_free && !s.svc_used && !s.tmr_used,
+	      s.rqb_free == m5_base.rqb_free && s.svc_used == m5_base.svc_used && !s.tmr_used,
 	      "messaging objects leaked (exch %u/%u, lb %u/%u, rqb %u/%u, svc %u, tmr %u)",
 	      s.exch_free, m5_base.exch_free, s.lb_free, m5_base.lb_free, s.rqb_free,
 	      m5_base.rqb_free, s.svc_used, s.tmr_used);
@@ -911,6 +914,265 @@ static void test_killjob(void)
 	kprintf("DOORS: M6 OK\n");
 }
 
+/* ======================================================================== M7 */
+
+/* The test disk is made by tools/mkdisk.py and checked afterwards by tools/check_disk.py. */
+
+#define S(x) x, (U32)(sizeof(x) - 1)		/* "literal", its length */
+
+static U8 fbuf[4096], fbuf2[4096];
+
+static U8 patb(U64 i, U32 mul) { return (U8)(i * mul); }
+
+static erc_t write_pat(const char *path, U32 plen, U64 n, U32 mul)
+{
+	U32 h;
+	U64 done, off, i, k;
+	erc_t erc;
+
+	erc = CreateFile(path, plen, 0);
+	if (erc && erc != ErcDupName)
+		return erc;
+	if ((erc = OpenFile(path, plen, ModeModify, 1, &h)))
+		return erc;
+	for (off = 0; off < n && !erc; off += k) {
+		k = n - off < sizeof(fbuf) ? n - off : sizeof(fbuf);
+		for (i = 0; i < k; i++)
+			fbuf[i] = patb(off + i, mul);
+		erc = WriteBytes(h, fbuf, k, &done);
+	}
+	CloseFile(h);
+	return erc;
+}
+
+static bool check_pat(const char *path, U32 plen, U64 n, U32 mul)
+{
+	U32 h;
+	U64 done, off = 0, i, size;
+	erc_t erc;
+
+	if (OpenFile(path, plen, ModeRead, 1, &h))
+		return false;
+	if (GetFileSize(h, &size) || size != n) {
+		CloseFile(h);
+		return false;
+	}
+	do {
+		erc = ReadBytes(h, fbuf, sizeof(fbuf), &done);
+		for (i = 0; i < done; i++)
+			if (fbuf[i] != patb(off + i, mul)) {
+				CloseFile(h);
+				return false;
+			}
+		off += done;
+	} while (erc == ErcOk && done);
+	CloseFile(h);
+	return off == n;
+}
+
+static U64 read_all(const char *path, U32 plen, U8 *buf, U64 max)
+{
+	U32 h;
+	U64 n = 0;
+	erc_t erc;
+
+	if (OpenFile(path, plen, ModeRead, 1, &h))
+		return ~0UL;
+	erc = ReadBytes(h, buf, max, &n);
+	CloseFile(h);
+	return erc == ErcOk || erc == ErcEOF ? n : ~0UL;
+}
+
+static void test_disk(void)
+{
+	struct blkdev *d = blk_get(DEV_HD0);
+	struct devstat ds;
+	struct volume *c = vol_get('C'), *dv = vol_get('D'), *e = vol_get('E');
+	U32 n, i;
+	U64 scratch;
+
+	CHECK(d, "no disk 12 (is the test disk attached?)");
+	CHECK(d->nblocks == 196608, "disk 12 has %lu blocks, expected 196608", d->nblocks);
+	CHECK(DeviceStat(DEV_HD0, (U8 *)&ds, sizeof(ds), &n) == ErcOk && ds.nblocks == d->nblocks,
+	      "DeviceStat");
+	CHECK(DeviceOp(DEV_HD0, CmdRead, 0, 1, fbuf) == ErcOk && fbuf[510] == 0x55 && fbuf[511] == 0xAA,
+	      "DeviceOp read of the MBR");
+	scratch = d->nblocks - 8;			/* unpartitioned space at the end */
+	for (i = 0; i < 1024; i++)
+		fbuf[i] = (U8)(i ^ 0x5A);
+	CHECK(DeviceOp(DEV_HD0, CmdWrite, scratch, 2, fbuf) == ErcOk, "DeviceOp write");
+	memset(fbuf2, 0, 1024);
+	CHECK(DeviceOp(DEV_HD0, CmdRead, scratch, 2, fbuf2) == ErcOk && !memcmp(fbuf, fbuf2, 1024),
+	      "DeviceOp read back");
+	CHECK(DeviceOp(DEV_HD0, CmdVerify, scratch, 2, NULL) == ErcOk, "DeviceOp verify");
+	CHECK(DeviceOp(99, CmdRead, 0, 1, fbuf) == ErcBadDevNum, "bad device number");
+	CHECK(DeviceOp(DEV_HD0 + 3, CmdRead, 0, 1, fbuf) == ErcNoDriver, "missing device");
+	CHECK(DeviceOp(DEV_HD0, 7, 0, 1, fbuf) == ErcBadOpNum, "bad operation");
+	CHECK(DeviceOp(DEV_HD0, CmdRead, d->nblocks, 1, fbuf) == ErcBeyondEOF, "read past the end");
+	CHECK(c && c->kind == VOL_FAT32 && dv && dv->kind == VOL_FAT16 && e && e->kind == VOL_FAT12,
+	      "volumes C:/D:/E: are not FAT32/16/12");
+	kprintf("M7: disk ok (ATA disk 12, %lu MB; DeviceOp/DeviceStat; C: FAT32 %s, D: FAT16 %s, "
+		"E: FAT12 %s)\n", d->nblocks >> 11, c->label, dv->label, e->label);
+}
+
+static void test_fat_read(void)
+{
+	U32 h;
+	U64 n;
+	U8 disk;
+
+	CHECK(read_all(S("C:\\HELLO.TXT"), fbuf, sizeof(fbuf)) == 25 &&
+	      !memcmp(fbuf, "Hello from a FAT32 file.\n", 25), "C:\\HELLO.TXT");
+	CHECK(read_all(S("c:\\a long file name.TXT"), fbuf, sizeof(fbuf)) == 27 &&
+	      !memcmp(fbuf, "This file has a long name.\n", 27), "long name, any case");
+	CHECK(read_all(S("C:\\ALONGF~1.TXT"), fbuf, sizeof(fbuf)) == 27, "short alias of a long name");
+	CHECK(read_all(S("C:/dir1/sub/deep.txt"), fbuf, sizeof(fbuf)) == 19 &&
+	      !memcmp(fbuf, "Three levels down.\n", 19), "nested directories");
+	CHECK(read_all(S("C:\\DIR1\\SUB\\..\\..\\HELLO.TXT"), fbuf, sizeof(fbuf)) == 25, "'..' in a path");
+	CHECK(read_all(S("D:\\README.TXT"), fbuf, sizeof(fbuf)) == 16 && !memcmp(fbuf, "FAT16 volume D:\n", 16),
+	      "D:\\README.TXT (FAT16)");
+	CHECK(read_all(S("E:\\TINY.TXT"), fbuf, sizeof(fbuf)) == 16 && !memcmp(fbuf, "FAT12 volume E:\n", 16),
+	      "E:\\TINY.TXT (FAT12)");
+	{
+		U64 off = 0, i;
+		bool ok = OpenFile(S("C:\\BIG.BIN"), ModeRead, 1, &h) == ErcOk;
+
+		while (ok) {
+			erc_t erc = ReadBytes(h, fbuf, sizeof(fbuf), &n);
+
+			for (i = 0; i < n; i++)
+				ok &= fbuf[i] == (U8)((off + i) * 7 + (off + i) / 251);
+			off += n;
+			if (erc)
+				break;
+		}
+		CloseFile(h);
+		CHECK(ok && off == 200000, "C:\\BIG.BIN (200000 bytes, many clusters): %lu bytes", off);
+	}
+	CHECK(OpenFile(S("C:\\NOPE.TXT"), ModeRead, 1, &h) == ErcNoSuchFile, "missing file");
+	CHECK(OpenFile(S("C:\\NODIR\\X.TXT"), ModeRead, 1, &h) == ErcNoSuchDir, "missing directory");
+	CHECK(OpenFile(S("Z:\\X.TXT"), ModeRead, 1, &h) == ErcNoSuchDrive, "missing drive");
+	CHECK(OpenFile(S("HELLO.TXT"), ModeRead, 1, &h) == ErcBadFileSpec, "path without a drive");
+	CHECK(OpenFile(S("C:\\DIR1"), ModeRead, 1, &h) == ErcNotAFile, "opening a directory");
+	CHECK(OpenFile(S("C:\\HELLO.TXT"), 5, 1, &h) == ErcBadOpenMode, "bad mode");
+
+	CHECK(OpenFile(S("C:\\BIG.BIN"), ModeRead, 0, &h) == ErcOk, "block mode open");
+	CHECK(ReadBlock(h, fbuf, 512, 1024, &n) == ErcOk && n == 512 &&
+	      fbuf[0] == (U8)(1024 * 7 + 1024 / 251), "ReadBlock at 1024");
+	CHECK(ReadBlock(h, fbuf, 512, 200192, &n) == ErcBeyondEOF, "ReadBlock beyond EOF");
+	CHECK(ReadBlock(h, fbuf, 100, 0, &n) == ErcBadFileSpec, "ReadBlock of a partial block");
+	CHECK(ReadBytes(h, fbuf, 10, &n) == ErcBlockFile, "ReadBytes on a block file");
+	CloseFile(h);
+
+	CHECK(GetDirSector(S("C:\\"), fbuf, 512, 0) == ErcOk, "GetDirSector C:\\");
+	CHECK(GetDirSector(S("C:\\DIR1"), fbuf, 512, 0) == ErcOk && !memcmp(fbuf, ".          ", 11) &&
+	      !memcmp(fbuf + 32, "..         ", 11), "GetDirSector C:\\DIR1 starts with . and ..");
+	CHECK(GetDirSector(S("C:\\DIR1"), fbuf, 512, 999) == ErcNoMatch, "GetDirSector past the end");
+	CHECK(GetSystemDisk(&disk) == ErcOk && disk == 2, "GetSystemDisk");
+	kprintf("M7: FAT read ok (FAT32/16/12, long names, nested dirs, 200000-byte file, block mode)\n");
+}
+
+static void test_fat_write(void)
+{
+	U32 h, h2;
+	U64 n, size, lfa;
+
+	CHECK(CreateFile(S("C:\\NEW.TXT"), 0) == ErcOk, "CreateFile");
+	CHECK(CreateFile(S("C:\\NEW.TXT"), 0) == ErcDupName, "CreateFile of an existing name");
+	CHECK(OpenFile(S("C:\\NEW.TXT"), ModeModify, 1, &h) == ErcOk, "OpenFile modify");
+	CHECK(OpenFile(S("C:\\NEW.TXT"), ModeRead, 1, &h2) == ErcFileInUse, "read while modifying");
+	{
+		U64 i;
+
+		for (i = 0; i < 4000; i++)
+			fbuf[i] = patb(i, 13);
+		CHECK(WriteBytes(h, fbuf, 4000, &n) == ErcOk && n == 4000, "WriteBytes 4000");
+		for (i = 0; i < 4000; i++)
+			fbuf[i] = patb(4000 + i, 13);
+		CHECK(WriteBytes(h, fbuf, 4000, &n) == ErcOk, "WriteBytes 4000 more");
+		for (i = 0; i < 2000; i++)
+			fbuf[i] = patb(8000 + i, 13);
+		CHECK(WriteBytes(h, fbuf, 2000, &n) == ErcOk, "WriteBytes 2000 more");
+	}
+	CHECK(GetFileLFA(h, &lfa) == ErcOk && lfa == 10000, "GetFileLFA after writing: %lu", lfa);
+	CHECK(SetFileLFA(h, 20000) == ErcBeyondEOF, "SetFileLFA beyond EOF");
+	CHECK(SetFileLFA(h, ~0UL) == ErcOk && GetFileLFA(h, &lfa) == ErcOk && lfa == 10000, "SetFileLFA(EOF)");
+	CHECK(GetFileSize(h, &size) == ErcOk && size == 10000, "GetFileSize");
+	CloseFile(h);
+	CHECK(check_pat(S("C:\\NEW.TXT"), 10000, 13), "read back NEW.TXT");
+
+	/* copies: stream mode, and block mode + SetFileSize (MMURTL's copy lost the last block) */
+	n = read_all(S("C:\\HELLO.TXT"), fbuf2, sizeof(fbuf2));
+	CHECK(CreateFile(S("C:\\COPY.TXT"), 0) == ErcOk && OpenFile(S("C:\\COPY.TXT"), ModeModify, 1, &h) == ErcOk &&
+	      WriteBytes(h, fbuf2, n, &size) == ErcOk && size == 25, "stream copy");
+	CloseFile(h);
+	memset(fbuf2 + 25, 0, 512 - 25);
+	CHECK(CreateFile(S("C:\\COPYB.TXT"), 0) == ErcOk && OpenFile(S("C:\\COPYB.TXT"), ModeModify, 0, &h) == ErcOk &&
+	      WriteBlock(h, fbuf2, 512, 0, &size) == ErcOk && SetFileSize(h, 25) == ErcOk, "block copy");
+	CHECK(GetFileSize(h, &size) == ErcOk && size == 25, "block copy size %lu", size);
+	CloseFile(h);
+
+	CHECK(write_pat(S("C:\\Long name created by DOORS.txt"), 0, 1) == ErcOk, "long name create");
+	CHECK(OpenFile(S("C:\\long NAME created by doors.TXT"), ModeModify, 1, &h) == ErcOk &&
+	      WriteBytes(h, (const U8 *)"long\n", 5, &n) == ErcOk, "long name write");
+	CloseFile(h);
+
+	CHECK(write_pat(S("C:\\TRUNC.TXT"), 3000, 3) == ErcOk, "TRUNC.TXT");
+	CHECK(OpenFile(S("C:\\TRUNC.TXT"), ModeModify, 1, &h) == ErcOk && SetFileSize(h, 100) == ErcOk &&
+	      SetFileSize(h, 5000) == ErcOk && GetFileSize(h, &size) == ErcOk && size == 5000,
+	      "SetFileSize shrink + grow");
+	CloseFile(h);
+
+	CHECK(CreateDir(S("C:\\NEWDIR")) == ErcOk, "CreateDir");
+	CHECK(CreateDir(S("C:\\NEWDIR")) == ErcDupName, "CreateDir twice");
+	CHECK(CreateFile(S("C:\\NEWDIR\\X.TXT"), 0) == ErcOk, "file in a new directory");
+	CHECK(RenameFile(S("C:\\NEWDIR\\X.TXT"), S("C:\\NEWDIR\\Y.TXT")) == ErcOk, "RenameFile");
+	CHECK(OpenFile(S("C:\\NEWDIR\\X.TXT"), ModeRead, 1, &h) == ErcNoSuchFile, "old name gone");
+	CHECK(RenameFile(S("C:\\HELLO.TXT"), S("D:\\HELLO.TXT")) == ErcRenameDrv, "rename across volumes");
+	CHECK(DeleteDir(S("C:\\NEWDIR")) == ErcDirNotEmpty, "DeleteDir of a non-empty directory");
+	CHECK(OpenFile(S("C:\\NEWDIR\\Y.TXT"), ModeRead, 1, &h) == ErcOk && DeleteFile(h) == ErcReadOnly,
+	      "DeleteFile needs ModeModify");
+	CloseFile(h);
+	CHECK(OpenFile(S("C:\\NEWDIR\\Y.TXT"), ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk,
+	      "DeleteFile");
+	CHECK(DeleteDir(S("C:\\NEWDIR")) == ErcOk, "DeleteDir (MMURTL's rd hung the system)");
+	CHECK(OpenFile(S("C:\\NEWDIR\\Y.TXT"), ModeRead, 1, &h) == ErcNoSuchDir, "deleted directory gone");
+
+	CHECK(CreateDir(S("C:\\MOVEME")) == ErcOk && write_pat(S("C:\\MOVEME\\INSIDE.TXT"), 0, 1) == ErcOk &&
+	      OpenFile(S("C:\\MOVEME\\INSIDE.TXT"), ModeModify, 1, &h) == ErcOk &&
+	      WriteBytes(h, (const U8 *)"inside\n", 7, &n) == ErcOk, "directory to move");
+	CloseFile(h);
+	CHECK(RenameFile(S("C:\\MOVEME"), S("C:\\DIR1\\MOVED")) == ErcOk, "move a directory");
+	CHECK(read_all(S("C:\\DIR1\\MOVED\\..\\..\\HELLO.TXT"), fbuf, sizeof(fbuf)) == 25,
+	      "'..' of the moved directory points to its new parent");
+
+	CHECK(write_pat(S("D:\\D16.TXT"), 3000, 5) == ErcOk && check_pat(S("D:\\D16.TXT"), 3000, 5), "FAT16 write");
+	CHECK(write_pat(S("E:\\E12.BIN"), 1UL << 20, 11) == ErcOk && check_pat(S("E:\\E12.BIN"), 1UL << 20, 11),
+	      "FAT12 1 MB write (FAT entries across sector boundaries)");
+	CHECK(fsys_open_count() == 0, "%u files left open", fsys_open_count());
+	kprintf("M7: FAT write ok (create, stream/block write, copy, long names, truncate/extend, "
+		"mkdir/rename/delete/rmdir, move dir; FAT32/16/12)\n");
+}
+
+static void test_fs_jobs(void)
+{
+	const struct job *j;
+	U32 job;
+
+	CHECK(LoadNewJob(S("C:\\BIN\\HELLO.ELF"), &job) == ErcOk, "LoadNewJob(C:\\BIN\\HELLO.ELF)");
+	j = wait_job(job, 500);
+	CHECK(j && !j->alive && j->exit_erc == 0, "hello from a file exited with %u", j ? j->exit_erc : 0);
+	CHECK(LoadNewJob(S("C:\\HELLO.TXT"), &job) == ErcBadRunFile, "a text file loaded as a program");
+	kprintf("M7: LoadNewJob from a file ok (C:\\BIN\\HELLO.ELF ran as job %u)\n", job);
+
+	job = run("fsuser");
+	j = wait_job(job, 500);
+	CHECK(j && !j->alive && j->exit_erc == 0, "fsuser exited with %u", j ? j->exit_erc : 0);
+	CHECK(fsys_open_count() == 0, "the ended job's file was not closed (%u open)", fsys_open_count());
+	kprintf("M7: file calls from ring 3 ok (and the file it left open was closed at exit)\n");
+	kprintf("DOORS: M7 OK\n");
+}
+
 /* Last test: overflow the kernel stack into its guard page. The #PF can't push its frame on
    the dead stack, so the CPU raises #DF, which runs on its own IST stack. */
 
@@ -971,6 +1233,11 @@ void selftest_run(void)
 	test_user_fpu();
 	test_user_service();
 	test_killjob();
+
+	test_disk();
+	test_fat_read();
+	test_fat_write();
+	test_fs_jobs();
 
 	isr_register(8, df_handler);
 	recurse(0);

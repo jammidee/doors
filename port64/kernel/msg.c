@@ -486,3 +486,24 @@ void exch_free_job(U32 job)
 		if (ex[e].inuse && ex[e].owner == job)
 			dealloc(e);
 }
+
+/* ---- kernel mutex (msg.h) ---- */
+
+void kmutex_init(struct kmutex *m)
+{
+	if (exch_alloc_job(1, &m->exch) || SendMsg(m->exch, 0, 0))
+		panic("kmutex: no exchange or link block");
+}
+
+void kmutex_lock(struct kmutex *m)
+{
+	U64 msg[2];
+
+	while (WaitMsg(m->exch, msg))
+		;
+}
+
+void kmutex_unlock(struct kmutex *m)
+{
+	ISendMsg(m->exch, 0, 0);	/* never switches here; the waiter runs when its turn comes */
+}

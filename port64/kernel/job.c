@@ -12,6 +12,7 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/fs.h>
 #include <doors/job.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
@@ -124,17 +125,75 @@ static erc_t map_user_stack(struct addr_space *as)
 
 /* ---- MMURTL calls ---- */
 
+/* Read a whole program file (path "C:\..."). The buffer comes from AllocOSPage. */
+static erc_t read_file(const char *path, U32 len, U8 **buf, U64 *size, U32 *npages)
+{
+	U32 h;
+	U64 got;
+	erc_t erc;
+
+	if ((erc = OpenFile(path, len, ModeRead, 1, &h)))
+		return erc;
+	if ((erc = GetFileSize(h, size)) == ErcOk) {
+		if (!*size || *size > 64UL * 1024 * 1024) {
+			erc = ErcBadRunFile;
+		} else {
+			*npages = (U32)(PAGE_ROUND_UP(*size) / PAGE_SIZE);
+			erc = AllocOSPage(*npages, buf);
+			if (!erc) {
+				erc = ReadBytes(h, *buf, *size, &got);
+				if (erc == ErcEOF && got == *size)
+					erc = ErcOk;
+				if (erc)
+					DeAllocPage(*buf, *npages);
+			}
+		}
+	}
+	CloseFile(h);
+	return erc;
+}
+
+static erc_t start_job(const U8 *img, U64 size, const char *name, U32 nlen, const char *args,
+		       U32 *pJobNumRet);
+
+/* MMURTL loaded a .RUN file by path. DOORS loads an ELF64 program either from a file
+   ("C:\BIN\HELLO.ELF") or, without a drive, from a boot module of that name. */
 erc_t LoadNewJob(const char *pFileName, U32 cbFileName, U32 *pJobNumRet)
 {
-	const struct boot_module *m = boot_module(pFileName, cbFileName);
+	const struct boot_module *m;
+	const char *base = pFileName;
+	U32 i, npages = 0;
+	U8 *buf = NULL;
+	U64 size;
+	erc_t erc;
+
+	for (i = 0; i < cbFileName; i++)
+		if (pFileName[i] == ':' || pFileName[i] == '\\' || pFileName[i] == '/')
+			base = pFileName + i + 1;
+	if (base == pFileName) {
+		m = boot_module(pFileName, cbFileName);
+		if (!m)
+			return ErcNoSuchFile;
+		return start_job(phys_to_virt(m->start), m->end - m->start, m->name,
+				 (U32)strlen(m->name), m->args, pJobNumRet);
+	}
+	if ((erc = read_file(pFileName, cbFileName, &buf, &size, &npages)))
+		return erc;
+	erc = start_job(buf, size, base, (U32)(pFileName + cbFileName - base), "", pJobNumRet);
+	DeAllocPage(buf, npages);
+	return erc;
+}
+
+static erc_t start_job(const U8 *img, U64 size, const char *name, U32 nlen, const char *args,
+		       U32 *pJobNumRet)
+{
 	struct addr_space *as;
 	struct task *t;
 	U64 entry, f;
 	erc_t erc;
 	U32 j;
+	char tname[16];
 
-	if (!m)
-		return ErcNoSuchFile;
 	f = irq_save();
 	for (j = FIRST_USER_JOB; j < MAX_JOBS && jobs[j].used; j++)
 		;
@@ -151,7 +210,7 @@ erc_t LoadNewJob(const char *pFileName, U32 cbFileName, U32 *pJobNumRet)
 		jobs[j].used = false;
 		return ErcNoMem;
 	}
-	erc = elf_load(as, phys_to_virt(m->start), m->end - m->start, &entry);
+	erc = elf_load(as, img, size, &entry);
 	if (!erc)
 		erc = map_user_stack(as);
 	if (erc) {
@@ -159,11 +218,13 @@ erc_t LoadNewJob(const char *pFileName, U32 cbFileName, U32 *pJobNumRet)
 		jobs[j].used = false;
 		return erc;
 	}
-	memcpy(jobs[j].name, m->name, strlen(m->name) < 15 ? strlen(m->name) : 15);
-	memcpy(jobs[j].cmdline, m->args, strlen(m->args) < 79 ? strlen(m->args) : 79);
+	memcpy(jobs[j].name, name, nlen < 15 ? nlen : 15);
+	memcpy(jobs[j].cmdline, args, strlen(args) < 79 ? strlen(args) : 79);
 	jobs[j].alive = true;
+	memset(tname, 0, sizeof(tname));
+	memcpy(tname, name, nlen < 15 ? nlen : 15);
 
-	t = task_create_user(m->name, j, entry, USER_STACK_TOP, DEFAULT_PRIORITY, &erc);
+	t = task_create_user(tname, j, entry, USER_STACK_TOP, DEFAULT_PRIORITY, &erc);
 	if (!t) {
 		vmm_space_destroy(as);
 		jobs[j].used = jobs[j].alive = false;
@@ -184,6 +245,7 @@ static void job_end(U32 job, erc_t erc)
 	sched_kill_job(job);
 	rqb_job_gone(job);
 	svc_job_gone(job);
+	fsys_job_gone(job);
 	exch_free_job(job);
 	if (self)
 		vmm_space_switch(&kernel_space);	/* we are about to free the space we run in */
