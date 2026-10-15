@@ -23,6 +23,8 @@
 #define ErcNoMoreTSSs   45	/* out of tasks */
 #define ErcNoMoreRqBlks 46	/* out of request blocks */
 #define ErcNoMoreJCBs   47	/* out of job control blocks */
+#define ErcBadCallGate  49	/* called an uninitialised call gate (here: unknown, not yet
+				   ported, or kernel-only system call) */
 #define ErcBadPriority  50
 #define ErcBadJobNum    70
 #define ErcInvalidJCB   71

@@ -154,6 +154,7 @@ static void deliver(struct exch *x, struct lb *lb, bool may_switch)
 		t->next = NULL;
 		t->lb_ret = lb;
 		t->wait_erc = ErcOk;
+		t->wait_exch = 0;
 		sched_wake(t, may_switch);
 		return;
 	}
@@ -210,7 +211,7 @@ static void dealloc(U32 e)
 
 		x->mhead = lb->next;
 		if (lb->type == LB_REQ || lb->type == LB_REQA)
-			rqb_dispose(lb->lo);
+			rqb_fail(lb->lo, ErcNoSuchSvc);	/* tell the requester */
 		lb_free(lb);
 	}
 	while (x->thead) {
@@ -220,6 +221,7 @@ static void dealloc(U32 e)
 		t->next = NULL;
 		t->lb_ret = NULL;
 		t->wait_erc = ErcNotAlloc;
+		t->wait_exch = 0;
 		sched_wake(t, false);
 	}
 	kill_alarms(e);
@@ -317,6 +319,7 @@ erc_t WaitMsg(U32 Exch, U64 *pMsgRet)
 		/* Queue ourselves on the exchange and give up the CPU until a message arrives. */
 		current->next = NULL;
 		current->lb_ret = NULL;
+		current->wait_exch = Exch;
 		if (x->ttail)
 			x->ttail->next = current;
 		else
@@ -444,4 +447,42 @@ void msg_get_stats(struct msg_stats *s)
 	s->tmr_used = tmr_used;
 	s->svc_used = svc;
 	irq_restore(f);
+}
+
+/* ---- jobs going away (kernel/job.c), interrupts off ---- */
+
+/* Take a task off the exchange it is waiting at (it is being killed). */
+void exch_remove_waiter(struct task *t)
+{
+	struct exch *x;
+	struct task **pp;
+
+	if (!t->wait_exch || t->wait_exch >= nEXCH)
+		return;
+	x = &ex[t->wait_exch];
+	for (pp = &x->thead; *pp; pp = &(*pp)->next) {
+		if (*pp == t) {
+			*pp = t->next;
+			if (x->ttail == t) {
+				struct task *p = x->thead;
+
+				while (p && p->next)
+					p = p->next;
+				x->ttail = p;
+			}
+			break;
+		}
+	}
+	t->next = NULL;
+	t->wait_exch = 0;
+}
+
+/* Free every exchange owned by `job`. */
+void exch_free_job(U32 job)
+{
+	U32 e;
+
+	for (e = 1; e < nEXCH; e++)
+		if (ex[e].inuse && ex[e].owner == job)
+			dealloc(e);
 }

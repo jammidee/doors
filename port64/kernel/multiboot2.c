@@ -15,6 +15,18 @@ static void copy(char *dst, U32 size, const char *src)
 	dst[n] = 0;
 }
 
+struct boot_info boot_info;
+
+const struct boot_module *boot_module(const char *name, U32 len)
+{
+	U32 i;
+
+	for (i = 0; i < boot_info.nmods; i++)
+		if (strlen(boot_info.mods[i].name) == len && !memcmp(boot_info.mods[i].name, name, len))
+			return &boot_info.mods[i];
+	return NULL;
+}
+
 static const char *mmap_type(U32 t)
 {
 	switch (t) {
@@ -50,6 +62,29 @@ void mb2_parse(U64 mbi_phys, struct boot_info *bi, bool print)
 		case MB2_TAG_LOADER_NAME:
 			copy(bi->loader, sizeof(bi->loader), ((const struct mb2_tag_string *)tag)->string);
 			break;
+		case MB2_TAG_MODULE: {
+			const struct mb2_tag_module *m = (const struct mb2_tag_module *)tag;
+			struct boot_module *bm;
+			const char *s = m->string;
+			U32 n = 0;
+
+			if (bi->nmods >= 16)
+				break;
+			bm = &bi->mods[bi->nmods++];
+			bm->start = m->mod_start;
+			bm->end = m->mod_end;
+			while (*s == ' ')
+				s++;
+			while (s[n] && s[n] != ' ' && n < sizeof(bm->name) - 1) {
+				bm->name[n] = s[n];
+				n++;
+			}
+			s += n;
+			while (*s == ' ')
+				s++;
+			copy(bm->args, sizeof(bm->args), s);
+			break;
+		}
 		case MB2_TAG_MMAP: {
 			const struct mb2_tag_mmap *m = (const struct mb2_tag_mmap *)tag;
 			const U8 *e = (const U8 *)m->entries;

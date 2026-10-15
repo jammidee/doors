@@ -66,7 +66,7 @@ static int vkprintf(const char *fmt, va_list ap)
 	for (; *fmt; fmt++) {
 		bool left = false, neg = false;
 		char pad = ' ';
-		int width = 0, lng = 0, len;
+		int width = 0, lng = 0, len, prec = -1;
 		U64 u;
 		S64 s;
 		const char *str;
@@ -86,6 +86,17 @@ static int vkprintf(const char *fmt, va_list ap)
 		}
 		while (*fmt >= '0' && *fmt <= '9')
 			width = width * 10 + (*fmt++ - '0');
+		if (*fmt == '.') {		/* precision: only used to limit %s */
+			fmt++;
+			if (*fmt == '*') {
+				prec = va_arg(ap, int);
+				fmt++;
+			} else {
+				prec = 0;
+				while (*fmt >= '0' && *fmt <= '9')
+					prec = prec * 10 + (*fmt++ - '0');
+			}
+		}
 		while (*fmt == 'l' || *fmt == 'z') {
 			lng++;
 			fmt++;
@@ -100,7 +111,7 @@ static int vkprintf(const char *fmt, va_list ap)
 			str = va_arg(ap, const char *);
 			if (!str)
 				str = "(null)";
-			for (len = 0; str[len]; len++)
+			for (len = 0; str[len] && (prec < 0 || len < prec); len++)
 				;
 			put_field(&o, str, len, width, left, ' ');
 			break;
@@ -158,15 +169,29 @@ static int vkprintf(const char *fmt, va_list ap)
 	return o.n;
 }
 
+/* Interrupts are off while a message is printed, so lines from different tasks and jobs
+   don't interleave (the only lock on a single CPU). */
 int kprintf(const char *fmt, ...)
 {
 	va_list ap;
 	int n;
+	U64 f = irq_save();
 
 	va_start(ap, fmt);
 	n = vkprintf(fmt, ap);
 	va_end(ap);
+	irq_restore(f);
 	return n;
+}
+
+/* MMURTL TTYOut for the kernel console (attribute ignored for now). */
+void console_write_n(const char *s, U64 n)
+{
+	U64 f = irq_save();
+
+	while (n--)
+		console_putc(*s++);
+	irq_restore(f);
 }
 
 void panic(const char *fmt, ...)

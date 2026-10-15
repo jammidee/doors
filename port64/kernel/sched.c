@@ -17,6 +17,8 @@
 #define STACK_SLOT  (8 * PAGE_SIZE)		/* slot: guard page + stack + unused (also a guard) */
 
 struct task *current;
+U64 syscall_kstack;			/* kernel stack top of the running task (syscall.asm) */
+static U8 fpu_initial[512] __attribute__((aligned(16)));
 
 static struct task tasks[MAX_TASKS];
 static struct task *idle;
@@ -103,6 +105,9 @@ static void switch_task(struct task *next)
 	switch_tick = timer_ticks();
 	st.switches++;
 	tss_set_rsp0(next->stack_hi);
+	syscall_kstack = next->stack_hi;	/* SYSCALL entry switches to this stack */
+	__asm__ volatile("fxsave %0" : "=m"(prev->fpu));	/* eager x87/SSE switch */
+	__asm__ volatile("fxrstor %0" : : "m"(next->fpu));
 	if (next->space && next->space != current_space)
 		vmm_space_switch(next->space);
 	switch_to(&prev->rsp, next->rsp);
@@ -232,6 +237,7 @@ static struct task *alloc_task(const char *name, void (*entry)(void *), void *ar
 		return NULL;
 	}
 	memset(t, 0, sizeof(*t));
+	memcpy(t->fpu, fpu_initial, sizeof(fpu_initial));
 	t->stack_lo = STACK_BASE + i * STACK_SLOT + PAGE_SIZE;		/* page 0 = guard */
 	t->stack_hi = t->stack_lo + STACK_PAGES * PAGE_SIZE;
 	for (va = t->stack_lo; va < t->stack_hi; va += PAGE_SIZE) {
@@ -305,6 +311,19 @@ struct task *task_create(const char *name, void (*entry)(void *), void *arg, U8 
 	return t;
 }
 
+/* x87/SSE for user code (the kernel itself is built -mgeneral-regs-only): CR0.MP on, EM and TS
+   off; CR4.OSFXSR + OSXMMEXCPT; a clean FXSAVE image (FNINIT, MXCSR default) for new tasks. */
+static void fpu_init(void)
+{
+	U64 cr0 = read_cr0(), cr4 = read_cr4();
+	U32 mxcsr = 0x1F80;
+
+	cr0 = (cr0 | (1UL << 1)) & ~((1UL << 2) | (1UL << 3));
+	cr4 |= (1UL << 9) | (1UL << 10);
+	__asm__ volatile("mov %0, %%cr0; mov %1, %%cr4" : : "r"(cr0), "r"(cr4) : "memory");
+	__asm__ volatile("fninit; ldmxcsr %1; fxsave %0" : "=m"(fpu_initial) : "m"(mxcsr));
+}
+
 void sched_init(void)
 {
 	struct task *boot = &tasks[0];
@@ -319,6 +338,9 @@ void sched_init(void)
 	boot->stack_hi = (U64)(uintptr_t)kernel_stack_top;
 	memcpy(boot->name, "kmain", 6);
 	current = boot;
+	fpu_init();			/* before any task copies the clean FPU image */
+	memcpy(boot->fpu, fpu_initial, sizeof(fpu_initial));
+	syscall_kstack = boot->stack_hi;
 
 	idle = alloc_task("idle", idle_loop, NULL, nPRI - 1, 1, &erc);	/* never queued */
 	if (!idle)
@@ -343,6 +365,99 @@ void sched_get_stats(struct sched_stats *s)
 
 	*s = st;
 	irq_restore(f);
+}
+
+/* ---- user tasks ---- */
+
+extern void enter_user(U64 rip, U64 rsp);	/* syscall.asm: iretq to ring 3 */
+
+static void user_entry(void *unused)
+{
+	(void)unused;
+	enter_user(current->urip, current->ursp);
+}
+
+struct task *task_create_user(const char *name, U32 job, U64 rip, U64 rsp, U8 priority,
+			      erc_t *erc)
+{
+	struct task *t;
+	U64 f;
+
+	if (priority >= nPRI) {
+		*erc = ErcBadPriority;
+		return NULL;
+	}
+	f = irq_save();
+	t = alloc_task(name, user_entry, NULL, priority, job, erc);
+	if (t) {
+		t->user = true;
+		t->urip = rip;
+		t->ursp = rsp;
+		rdy_push(t);
+		maybe_preempt(false);
+	}
+	irq_restore(f);
+	return t;
+}
+
+/* Remove a task from wherever it is queued and make it a zombie (job teardown).
+   Interrupts off; never the running task. */
+static void rdy_remove(struct task *t)
+{
+	struct task **pp;
+
+	for (pp = &rdyq[t->priority].head; *pp; pp = &(*pp)->next) {
+		if (*pp == t) {
+			*pp = t->next;
+			if (rdyq[t->priority].tail == t) {
+				struct task *p = rdyq[t->priority].head;
+
+				while (p && p->next)
+					p = p->next;
+				rdyq[t->priority].tail = p;
+			}
+			st.ready--;
+			break;
+		}
+	}
+	t->next = NULL;
+}
+
+/* Kill every task of `job` except the running one. Their own exchanges are freed by the job
+   teardown (exch_free_job), not by reap. Interrupts off. */
+void sched_kill_job(U32 job)
+{
+	U32 i;
+
+	for (i = 1; i < MAX_TASKS; i++) {
+		struct task *t = &tasks[i];
+
+		if (t == current || t->job != job || t == idle)
+			continue;
+		if (t->state == TASK_READY)
+			rdy_remove(t);
+		else if (t->state == TASK_BLOCKED)
+			exch_remove_waiter(t);
+		else
+			continue;		/* FREE or already DEAD */
+		t->own_exch = false;
+		t->state = TASK_DEAD;
+		t->next = zombies;
+		zombies = t;
+	}
+	if (current->job == job)
+		current->own_exch = false;
+}
+
+U32 job_task_count(U32 job)
+{
+	U32 i, n = 0;
+
+	for (i = 0; i < MAX_TASKS; i++)
+		if (tasks[i].job == job && tasks[i].state != TASK_FREE && tasks[i].state != TASK_DEAD &&
+		    &tasks[i] != idle)
+			n++;
+	return n;
 }
 
 const struct task *task_by_index(U32 i)

@@ -17,6 +17,9 @@
 #define OS_BASE     0xFFFFC00000000000UL	/* AllocOSPage / AllocDMAPage region (PML4 384) */
 #define OS_TOP      0xFFFFC08000000000UL	/* 512 GiB */
 #define STACK_BASE  0xFFFFC08000000000UL	/* task kernel stacks, one guarded slot per task (PML4 385) */
+#define RQB_UBASE   0xFFFFC10000000000UL	/* read-only user window on the request block pool (PML4 386) */
+#define USER_STACK_TOP 0x00007FFFFFFF0000UL	/* initial user stack of a job (grows down) */
+#define USER_STACK_PAGES 16			/* 64 KB, with an unmapped guard page below */
 /* KERNEL_VMA (types.h) 0xFFFFFFFF80000000: kernel image (PML4 511) */
 
 #define DMA_LIMIT   0x1000000UL		/* ISA DMA: below 16 MB */
@@ -34,7 +37,7 @@
 
 /* ---- physical memory (kernel/pmm.c) ---- */
 struct boot_info;
-void pmm_init(U64 mbi_phys, U32 mbi_size);
+void pmm_init(U64 mbi_phys, const struct boot_info *bi);
 U64  pmm_alloc(void);				/* one zeroed page, 0 if none */
 U64  pmm_alloc_contig(U64 n, U64 limit);	/* n contiguous zeroed pages below limit, 0 if none */
 void pmm_free(U64 phys);

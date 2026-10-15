@@ -48,8 +48,11 @@ static U64 *next(U64 *tbl, unsigned idx, bool create, bool user)
 {
 	U64 pa;
 
-	if (tbl[idx] & PTE_P)
+	if (tbl[idx] & PTE_P) {
+		if (user && create && !(tbl[idx] & PTE_U))
+			tbl[idx] |= PTE_U;	/* a user page below: every level must allow it */
 		return table(tbl[idx]);
+	}
 	if (!create)
 		return NULL;
 	pa = pmm_alloc();
@@ -63,9 +66,10 @@ static U64 *next(U64 *tbl, unsigned idx, bool create, bool user)
 
 #define IDX(va, lvl) ((unsigned)(((va) >> (12 + 9 * (lvl))) & 511))
 
-static U64 *walk(struct addr_space *as, U64 va, bool create)
+/* user: the leaf will be a user page. Normally that means the lower half; a kernel-half page can
+   be user-visible too (the read-only request block window, msg.h), so it is a parameter. */
+static U64 *walk_u(struct addr_space *as, U64 va, bool create, bool user)
 {
-	bool user = va < 0x0000800000000000ULL;
 	U64 *t = table(as->pml4);
 
 	if (!(t = next(t, IDX(va, 3), create, user)))
@@ -79,9 +83,14 @@ static U64 *walk(struct addr_space *as, U64 va, bool create)
 	return &t[IDX(va, 0)];
 }
 
+static U64 *walk(struct addr_space *as, U64 va, bool create)
+{
+	return walk_u(as, va, create, va < 0x0000800000000000ULL);
+}
+
 erc_t vmm_map(struct addr_space *as, U64 va, U64 pa, U64 flags)
 {
-	U64 *pte = walk(as, va, true);
+	U64 *pte = walk_u(as, va, true, va < 0x0000800000000000ULL || (flags & PTE_U));
 
 	if (!pte)
 		return ErcNoMem;

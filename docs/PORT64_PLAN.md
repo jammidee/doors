@@ -134,14 +134,26 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
   aliased buffers and a MoveRequest to a worker; Alarm timeouts; ErcOwnerAbort path; no leaks.
 
 ### Phase 6 — Ring 3, system calls, jobs (port `JOBC.C`, `JOBCODE.ASM`, `MPUBLICS.ASM`)
-- [ ] `SYSCALL`/`SYSRET` entry: MSR setup (STAR, LSTAR, FMASK), swap to the kernel stack, dispatch table.
-      Validate user pointers (canonical, below the user limit).
-- [ ] Generate `include/doors/syscalls.h` and user stubs from one table that mirrors `MPUBLICS.ASM` order.
-- [ ] Executable format: ELF64 static, replacing the `.RUN` format (`RUNFILE.H`). The loader maps
-      segments into a new job's PML4 and sets up the stack and job control block (`JOB.INC`).
-- [ ] Job management: `LoadNewJob`, `ExitJob`, `Chain`, `KillJob`, job control blocks, `INITIAL.JOB` processing.
+- [x] `SYSCALL`/`SYSRET` (`arch/x86_64/syscall.asm`, `kernel/syscall.c`): STAR/LSTAR/FMASK, switch to the task's
+      kernel stack, dispatch. Args are passed as a user array of U64 (Request has 12). User pointers are
+      range-checked and copied with fault fixups (`uaccess.asm`); kernel-only and unported calls return
+      `ErcBadCallGate` (49).
+- [x] One call table: `include/doors/syscalls.def`, generated from `MPUBLICS.ASM` by `tools/gen_syscalls.sh`
+      (number = (gate − 40h)/8). Used by both the kernel switch and the user stubs (`user/lib/libdoors.c`).
+- [x] FPU/SSE for user code: CR0/CR4 set up, a 512-byte FXSAVE area per task, eager save/restore on every
+      switch (moved from Phase 4).
+- [x] Executable format: static ELF64 linked at 0x40000000 (`user/user.ld`) with separate R+X / R / RW
+      segments; the loader (`kernel/job.c`) maps them with those permissions plus a 64 KB guarded stack.
+      Until M7 programs are GRUB boot modules (found by name).
+- [x] Jobs: `LoadNewJob`, `ExitJob`, `KillJob`, `GetJobNum`, `SetJobName`, `Get/SetCmdLine`, `INITIAL.JOB`;
+      job teardown (tasks, requests, services, exchanges, address space); a CPU fault in ring 3 ends just
+      that job (error 1000 + vector). `Chain`, `SetExitJob` and per-job video come with the CLI (Phase 8).
+- [x] User-mode services: the request block pool is also mapped read-only at `RQB_UBASE`, so a ring-3
+      service reads its requests as MMURTL services did; handles are translated at the syscall boundary.
 - **Done when:** a ring-3 "hello" ELF runs as a job and exits cleanly. A bad pointer passed to a call
-  returns an error instead of crashing the kernel.
+  returns an error instead of crashing the kernel. ✅ 2026-10-16: hello, badptr (16 bad calls rejected, its
+  own page fault ends only that job), 2 FPU jobs bit-identical, user service ↔ user client in two jobs,
+  KillJob of a 2-task job, 0 leaks over 6 jobs.
 
 ### Phase 7 — Drivers and file system (C sources port fairly directly)
 - [ ] Device driver interface (`DEVDRVR.ASM`, `MDEVDRV.H`): `InitDevDr`, `DeviceOp`, `DeviceStat`, `DeviceInit`.

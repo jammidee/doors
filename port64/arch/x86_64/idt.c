@@ -5,6 +5,7 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/job.h>
 #include <doors/task.h>
 #include <doors/x86.h>
 
@@ -96,16 +97,24 @@ void dump_regs(const struct regs *r)
 extern const U64 probe_fixups[];
 U64 last_fault_addr, last_fault_err;
 
+extern const U64 uaccess_fixups[];		/* uaccess.asm: user_copy */
+
 bool fault_fixup(struct regs *r)
 {
+	const U64 *tables[] = { probe_fixups, uaccess_fixups };
 	const U64 *f;
+	unsigned i;
 
-	for (f = probe_fixups; f[0]; f += 2) {
-		if (r->rip == f[0]) {
-			__asm__ volatile("mov %%cr2, %0" : "=r"(last_fault_addr));
-			last_fault_err = r->error;
-			r->rip = f[1];
-			return true;
+	if (r->cs & 3)
+		return false;			/* only kernel instructions have fixups */
+	for (i = 0; i < 2; i++) {
+		for (f = tables[i]; f[0]; f += 2) {
+			if (r->rip == f[0]) {
+				__asm__ volatile("mov %%cr2, %0" : "=r"(last_fault_addr));
+				last_fault_err = r->error;
+				r->rip = f[1];
+				return true;
+			}
 		}
 	}
 	return false;
@@ -138,6 +147,14 @@ void isr_dispatch(struct regs *r)
 	if ((v == 13 || v == 14) && fault_fixup(r))
 		return;
 
+	if (v < 32 && (r->cs & 3)) {
+		/* A fault in ring 3 only ends that job (the kernel keeps running), as a bad MMURTL
+		   program ended up terminated by the Monitor. */
+		kprintf("\n*** CPU exception %lu: %s in job %u (task %u) ***\n", v, exc_names[v],
+			current->job, current->tid);
+		dump_regs(r);
+		job_fault(r, (U32)v);		/* does not return */
+	}
 	if (v < 32) {
 		kprintf("\n*** CPU exception %lu: %s ***\n", v, exc_names[v]);
 		dump_regs(r);

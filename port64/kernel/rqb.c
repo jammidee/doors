@@ -25,12 +25,16 @@ static struct RqBlk *rqbs, *free_rqb;
 static U32 n_rqb_free;
 static struct svc svcs[nSVC];
 
+static U64 pool_bytes;
+
 void rqb_init(void)
 {
 	U8 *p;
-	U32 i;
+	U32 i, n;
 
-	if (AllocOSPage((U32)(PAGE_ROUND_UP(nRQB * sizeof(struct RqBlk)) / PAGE_SIZE), &p))
+	pool_bytes = PAGE_ROUND_UP(nRQB * sizeof(struct RqBlk));
+	n = (U32)(pool_bytes / PAGE_SIZE);
+	if (AllocOSPage(n, &p))
 		panic("rqb: out of memory for request blocks");
 	rqbs = (struct RqBlk *)p;
 	for (i = 0; i < nRQB; i++) {
@@ -38,6 +42,30 @@ void rqb_init(void)
 		free_rqb = &rqbs[i];
 	}
 	n_rqb_free = nRQB;
+
+	/* Read-only window for user-mode services (they read their requests as MMURTL services
+	   did). Made at boot, before any address space exists, so every space shares it. */
+	for (i = 0; i < n; i++) {
+		U64 pa;
+
+		if (GetPhyAdd(1, p + i * PAGE_SIZE, &pa) ||
+		    vmm_map(&kernel_space, RQB_UBASE + i * PAGE_SIZE, pa, PTE_U | PTE_NX))
+			panic("rqb: cannot map the user window");
+	}
+}
+
+/* Kernel handle <-> user handle (the same request block seen through RQB_UBASE). */
+U64 rqb_to_user(U64 h)
+{
+	U64 base = (U64)(uintptr_t)rqbs;
+
+	return h >= base && h < base + pool_bytes ? RQB_UBASE + (h - base) : h;
+}
+
+U64 rqb_from_user(U64 h)
+{
+	return h >= RQB_UBASE && h < RQB_UBASE + pool_bytes ?
+		(U64)(uintptr_t)rqbs + (h - RQB_UBASE) : h;
 }
 
 U32 rqb_free_count(void)
@@ -82,8 +110,8 @@ erc_t rqb_received(U64 h)
 
 	if (!r)
 		return ErcNotRqBlk;
-	if (job_space(r->RqOwnerJob) == current_space)
-		return ErcOk;				/* same address space: nothing to alias */
+	if (r->orphan || job_space(r->RqOwnerJob) == current_space)
+		return ErcOk;		/* requester gone, or same address space: nothing to alias */
 	if (r->cbData1 && r->pData1) {
 		erc = AliasMem(r->pOrig1, r->cbData1, r->RqOwnerJob, &r->pData1);
 		if (erc)
@@ -221,7 +249,7 @@ erc_t Respond(U64 dRqHndl, U32 dStatRet)
 		irq_restore(f);
 		return ErcNotRqBlk;
 	}
-	if (dStatRet == ErcOwnerAbort) {	/* MMURTL: just return the RqBlk to the pool */
+	if (dStatRet == ErcOwnerAbort || r->orphan) {	/* MMURTL: just free the RqBlk */
 		rqb_dispose(dRqHndl);
 		irq_restore(f);
 		return ErcOk;
@@ -261,4 +289,75 @@ erc_t MoveRequest(U64 dRqBlkHndl, U32 DestExch)
 		erc = msg_post(DestExch, dRqBlkHndl, 0, LB_REQA, true);	/* already aliased */
 	irq_restore(f);
 	return erc;
+}
+
+/* ---- jobs going away (kernel/job.c), interrupts off ---- */
+
+/* A request that can't be served: tell the requester (h, erc) and free the block. */
+void rqb_fail(U64 h, U32 erc)
+{
+	struct RqBlk *r = rqb_from(h);
+
+	if (!r)
+		return;
+	if (!r->orphan)
+		msg_post(r->RespExch, h, erc, LB_RESP, false);
+	rqb_dispose(h);
+}
+
+/* Unmap a service's alias of a requester's buffer, in the service's address space. */
+static void unmap_alias(struct addr_space *as, U8 *p, U64 cb)
+{
+	U64 va = (U64)(uintptr_t)p & PAGE_MASK, end = (U64)(uintptr_t)p + cb, pte;
+
+	for (; as && va < end; va += PAGE_SIZE)
+		if (vmm_translate(as, va, NULL, &pte) && (pte & PTE_ALIAS))
+			vmm_unmap(as, va);
+}
+
+/* Job `job` is ending:
+   - requests it made become orphans: the service's aliases of its (soon freed) pages are
+     removed now, the buffers are dropped, and the eventual Respond is discarded;
+   - requests it was serving (aliased into its space) are failed back to their requesters. */
+void rqb_job_gone(U32 job)
+{
+	U32 i;
+
+	for (i = 0; i < nRQB; i++) {
+		struct RqBlk *r = &rqbs[i];
+
+		if (!r->inuse)
+			continue;
+		if (r->RqOwnerJob == job && !r->orphan) {
+			if (r->svc_job) {
+				unmap_alias(job_space(r->svc_job), r->pData1, r->cbData1);
+				unmap_alias(job_space(r->svc_job), r->pData2, r->cbData2);
+			}
+			r->orphan = 1;
+			r->svc_job = 0;
+			r->pData1 = r->pData2 = r->pOrig1 = r->pOrig2 = NULL;
+			r->cbData1 = r->cbData2 = 0;
+		} else if (r->svc_job == job) {
+			rqb_fail((U64)(uintptr_t)r, ErcNoSuchSvc);
+		}
+	}
+}
+
+/* Services registered on exchanges owned by `job` disappear with it. */
+void svc_job_gone(U32 job)
+{
+	U32 i, owner;
+
+	for (i = 0; i < nSVC; i++)
+		if (svcs[i].used && exch_check(svcs[i].exch, &owner) == ErcOk && owner == job)
+			memset(&svcs[i], 0, sizeof(svcs[i]));
+}
+
+bool svc_registered(const char *name)
+{
+	U64 f = irq_save();
+	bool r = find_svc(name) != NULL;
+
+	irq_restore(f);
+	return r;
 }

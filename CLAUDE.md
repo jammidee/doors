@@ -134,3 +134,8 @@ make debug    # QEMU waits for gdb on :1234
   already aliased into the service's job.
 - Every task has its own exchange (`GetTSSExch`). `Sleep` = `Alarm` on it + `WaitMsg`, so don't use a task's
   own exchange for other traffic.
+- User programs (`port64/user/`): static ELF64 at 0x40000000, written against `user/lib/doors.h` (MMURTL names).
+  Add a program as `user/progs/NAME.c`; the Makefile builds it and adds it to the ISO as boot module NAME, which
+  `LoadNewJob("NAME", ...)` and the monitor's `run NAME` find. `user/INITIAL.JOB` lists what starts at boot.
+- New system calls: add a `case SYS_Name` in `kernel/syscall.c` (check every user pointer with
+  `urange`/`copy_in`/`copy_out`) and a stub in `libdoors.c`. Never edit `syscalls.def` by hand; it is generated.

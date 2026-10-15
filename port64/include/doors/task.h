@@ -42,6 +42,10 @@ struct task {
 	void *lb_ret;			/* MMURTL pLBRet: link block delivered to a waiting task */
 	erc_t wait_erc;			/* non-zero: the wait ended without a message (exchange freed) */
 	bool own_exch;			/* exch was allocated for this task (freed when it ends) */
+	U32 wait_exch;			/* TASK_BLOCKED: the exchange it waits at */
+	U64 urip, ursp;			/* user tasks: where ring 3 starts */
+	bool user;			/* runs in ring 3 */
+	U8 fpu[512] __attribute__((aligned(16)));	/* FXSAVE area (x87/SSE state) */
 	U64 ticks;			/* CPU ticks used (stats) */
 	struct task *next;		/* ready / sleep queue link (MMURTL NextTSS) */
 	char name[16];
@@ -59,6 +63,11 @@ struct task *task_create(const char *name, void (*entry)(void *), void *arg, U8 
 			 U32 job, erc_t *erc);
 NORETURN void task_exit(void);
 U32  task_count(void);
+struct task *task_create_user(const char *name, U32 job, U64 rip, U64 rsp, U8 priority,
+			      erc_t *erc);
+void sched_kill_job(U32 job);		/* interrupts off; all of job's tasks but the caller */
+U32  job_task_count(U32 job);
+extern U64 syscall_kstack;
 const struct task *task_by_index(U32 i);	/* NULL for a free slot */
 
 struct sched_stats {

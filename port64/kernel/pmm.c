@@ -61,8 +61,9 @@ static const struct mb2_tag_mmap *find_mmap(U64 mbi_phys)
 	     _p < (const U8 *)(m) + (m)->size; _p += (m)->entry_size) \
 		if ((e = (const struct mb2_mmap_entry *)_p)->type == MB2_MEM_AVAILABLE)
 
-void pmm_init(U64 mbi_phys, U32 mbi_size)
+void pmm_init(U64 mbi_phys, const struct boot_info *bi)
 {
+	U32 mbi_size = bi->mbi_size, i;
 	const struct mb2_tag_mmap *m = find_mmap(mbi_phys);
 	const struct mb2_mmap_entry *e;
 	U64 max = 0, bytes, kend = (U64)(uintptr_t)_kernel_end - KERNEL_VMA, at = 0;
@@ -85,6 +86,9 @@ void pmm_init(U64 mbi_phys, U32 mbi_size)
 			s = PAGE_ROUND_UP(kend);
 		if (s < mbi_phys + mbi_size && s + bytes > mbi_phys)
 			s = PAGE_ROUND_UP(mbi_phys + mbi_size);
+		for (i = 0; i < bi->nmods; i++)		/* and clear of the boot modules */
+			if (s < bi->mods[i].end && s + bytes > bi->mods[i].start)
+				s = PAGE_ROUND_UP(bi->mods[i].end);
 		if (s + bytes <= end && s + bytes <= 0x40000000ULL) {
 			at = s;
 			break;
@@ -110,6 +114,8 @@ void pmm_init(U64 mbi_phys, U32 mbi_size)
 	mark(0x100000, PAGE_ROUND_UP(kend), true);	/* kernel image (boot + higher half) */
 	mark(at, at + bytes, true);			/* the bitmap itself */
 	mark(mbi_phys & PAGE_MASK, PAGE_ROUND_UP(mbi_phys + mbi_size), true);
+	for (i = 0; i < bi->nmods; i++)		/* program images stay where GRUB put them */
+		mark(bi->mods[i].start & PAGE_MASK, PAGE_ROUND_UP(bi->mods[i].end), true);
 
 	kprintf("Memory:  %lu KB free of %lu KB (page bitmap %lu KB at %lx)\n",
 		nfree * 4, ntotal * 4, bytes >> 10, at);

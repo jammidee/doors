@@ -4,6 +4,7 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/job.h>
 #include <doors/kernel.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
@@ -35,17 +36,16 @@ static void banner(void)
 	kprintf("Based on MMURTL V1.0 by Richard A. Burgess (public domain)\n\n");
 }
 
-static struct boot_info bi;
 
-static void boot_info(U64 mbi_phys)
+static void read_boot_info(U64 mbi_phys)
 {
 	U64 efer = rdmsr(MSR_EFER);
 
-	mb2_parse(mbi_phys, &bi, true);
-	test_mode = cmdline_has(bi.cmdline, "test");
+	mb2_parse(mbi_phys, &boot_info, true);
+	test_mode = cmdline_has(boot_info.cmdline, "test");
 
-	kprintf("Loader:  %s   Cmdline: %s\n", bi.loader, bi.cmdline);
-	kprintf("Memory:  %lu MB usable (%u map entries)\n", bi.mem_usable >> 20, bi.mmap_count);
+	kprintf("Loader:  %s   Cmdline: %s\n", boot_info.loader, boot_info.cmdline);
+	kprintf("Memory:  %lu MB usable (%u map entries)\n", boot_info.mem_usable >> 20, boot_info.mmap_count);
 	kprintf("Kernel:  %p - %p (%lu KB)\n", _kernel_start, _kernel_end,
 		(U64)(_kernel_end - _kernel_start) >> 10);
 	kprintf("CPU:     long mode %s, CR0=%lx CR3=%lx CR4=%lx EFER=%lx\n",
@@ -75,6 +75,8 @@ static void cmd(const char *line)
 			"mem    free memory (QueryPages) and an AllocOSPage round trip\n"
 			"tasks  task list and scheduler statistics\n"
 			"spin   start two busy tasks for 3 s (watch time slicing in 'tasks')\n"
+			"run X  load boot module X as a new job (LoadNewJob)\n"
+			"jobs   list jobs;  kill N  end job N (KillJob)\n"
 			"int3   breakpoint exception (handled, execution continues)\n"
 			"pf     page fault at 0xdead0000 (register dump + panic)\n"
 			"div0   divide error (register dump + panic)\n");
@@ -120,6 +122,38 @@ static void cmd(const char *line)
 				"timers %u, services %u\n", m.exch_free, m.lb_free, m.rqb_free,
 				m.tmr_used, m.svc_used);
 		}
+	} else if (!strncmp(line, "run ", 4)) {
+		U32 job;
+		erc_t e = LoadNewJob(line + 4, (U32)strlen(line + 4), &job);
+
+		if (e)
+			kprintf("LoadNewJob: error %u\n", e);
+		else
+			kprintf("Loaded %s as job %u\n", line + 4, job);
+	} else if (!strcmp(line, "jobs")) {
+		U32 j;
+
+		for (j = 1; j < MAX_JOBS; j++) {
+			const struct job *jb = job_get(j);
+
+			if (!jb)
+				continue;
+			kprintf("Job %2u  %-15s %s", j, jb->name, jb->alive ? "running" : "ended");
+			if (!jb->alive)
+				kprintf(" (error %u)", jb->exit_erc);
+			kprintf("  tasks %u\n", job_task_count(j));
+		}
+		kprintf("Modules:");
+		for (j = 0; j < boot_info.nmods; j++)
+			kprintf(" %s", boot_info.mods[j].name);
+		kprintf("\n");
+	} else if (!strncmp(line, "kill ", 5)) {
+		U32 j = 0;
+		const char *q = line + 5;
+
+		while (*q >= '0' && *q <= '9')
+			j = j * 10 + (U32)(*q++ - '0');
+		kprintf("KillJob(%u): %u\n", j, KillJob(j));
 	} else if (!strcmp(line, "spin")) {
 		static erc_t e;
 
@@ -187,9 +221,9 @@ void kmain(U32 magic, U64 mbi_phys)
 
 	if (magic != MB2_BOOTLOADER_MAGIC)
 		panic("not booted by a Multiboot2 loader (magic %x)", magic);
-	boot_info(mbi_phys);
+	read_boot_info(mbi_phys);
 
-	pmm_init(mbi_phys, bi.mbi_size);
+	pmm_init(mbi_phys, &boot_info);
 	vmm_init();
 
 	gdt_init();
@@ -197,6 +231,8 @@ void kmain(U32 magic, U64 mbi_phys)
 	pic_init();
 	sched_init();		/* kmain becomes task 1; before the timer starts calling sched_tick */
 	msg_init();		/* exchanges, link blocks, request blocks, services, timer blocks */
+	job_init();
+	syscall_init();		/* SYSCALL/SYSRET for ring 3 programs */
 	pit_init(TICK_HZ);
 	kbd_init();
 	sti();
@@ -206,5 +242,7 @@ void kmain(U32 magic, U64 mbi_phys)
 
 	if (test_mode)
 		selftest_run();
+	kprintf("Boot modules: %u\n", boot_info.nmods);
+	job_load_initial();	/* programs listed in INITIAL.JOB, as MMURTL's Monitor did */
 	interactive();
 }

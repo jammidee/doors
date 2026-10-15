@@ -35,29 +35,7 @@
 
 #define TIMER_MSG 0xFFFFFFFFFFFFFFFFUL	/* both halves of a timer message */
 
-/* Request block (MMURTL RQB.INC, 64 bytes there; widened here: pointers and sizes 64-bit). */
-struct RqBlk {
-	U32 ServiceExch;	/* OS fill: exchange of the service (from the name) */
-	U32 RespExch;		/* user fill: where the response goes */
-	U32 RqOwnerJob;		/* OS fill: job number of the requester */
-	U32 ServiceRoute;	/* reserved (network routing) */
-	U64 pRqHndlRet;		/* reserved for the user */
-	U32 dData0;		/* user fill / service defined (no pointers) */
-	U32 dData1;
-	U32 dData2;
-	U16 ServiceCode;	/* service command number (user fill) */
-	U8  npSend;		/* number of send buffers (0..2) */
-	U8  npRecv;		/* number of receive buffers (2 - npSend) */
-	U8 *pData1;		/* user fill; the service sees its alias */
-	U64 cbData1;
-	U8 *pData2;
-	U64 cbData2;
-	/* DOORS private */
-	U8 *pOrig1, *pOrig2;	/* the requester's original pointers */
-	U32 svc_job;		/* job whose address space holds the aliases (0 = not aliased) */
-	U32 inuse;
-	struct RqBlk *pNextRQB;
-};
+#include <doors/rqblk.h>
 
 /* ---- MMURTL calls ---- */
 erc_t AllocExch(U32 *pExchRet);
@@ -95,6 +73,17 @@ erc_t rqb_received(U64 handle);		/* service side: alias the request's buffers */
 void  rqb_dispose(U64 handle);
 U32   rqb_free_count(void);
 U32   svc_used(U32 i);
+U64   rqb_to_user(U64 h);		/* kernel handle -> handle in the RQB_UBASE window */
+U64   rqb_from_user(U64 h);
+void  rqb_fail(U64 h, U32 erc);		/* answer (h, erc) and free; interrupts off */
+void  rqb_job_gone(U32 job);
+void  svc_job_gone(U32 job);
+bool  svc_registered(const char *name);
+
+/* job teardown helpers in kernel/msg.c (interrupts off) */
+struct task;
+void  exch_remove_waiter(struct task *t);
+void  exch_free_job(U32 job);
 
 struct msg_stats {
 	U32 exch_free, lb_free, rqb_free, tmr_used, svc_used;

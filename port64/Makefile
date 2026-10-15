@@ -66,6 +66,17 @@ TEST_ARGS := \
 	--expect "M5: cross-job Request ok" \
 	--expect "M5: no leaks" \
 	--expect "DOORS: M5 OK" \
+	--expect "hello: running in ring 3 as job" \
+	--expect "hello: KECHO replied 'kernel got: ring 3'" \
+	--expect "M6: hello ok" \
+	--expect "badptr: all" \
+	--expect "M6: bad pointers ok" \
+	--expect "M6: FPU/SSE ok" \
+	--expect "upcli: UPCASE replied 'DOORS FROM USER MODE'" \
+	--expect "M6: user-mode service ok" \
+	--expect "M6: KillJob ok" \
+	--expect "M6: no leaks" \
+	--expect "DOORS: M6 OK" \
 	--send "M2: type doors=doors\n" \
 	--send "M5: type msg=msg\n"
 
@@ -84,18 +95,43 @@ $(BUILD)/%.o: %.asm
 $(KERNEL): $(OBJS) linker.ld
 	$(LD) $(LDFLAGS) $(OBJS) -o $@
 
-# $(call mkiso,<iso>,<kernel cmdline>)
+# ---- user programs (port64/user): static ELF64 at 0x40000000, loaded as GRUB boot modules ----
+USER_CFLAGS := -std=c11 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-stack-protector \
+               -fno-pic -fno-pie -fno-builtin -mcmodel=small -fno-asynchronous-unwind-tables \
+               -Iinclude -Iuser/lib -MMD -MP
+USER_PROGS  := $(basename $(notdir $(wildcard user/progs/*.c)))
+USER_ELFS   := $(USER_PROGS:%=$(BUILD)/user/%.elf)
+USER_LIB    := $(BUILD)/user/lib/crt0.o $(BUILD)/user/lib/libdoors.o
+
+$(BUILD)/user/lib/crt0.o: user/lib/crt0.asm
+	@mkdir -p $(dir $@)
+	$(AS) $(ASFLAGS) $< -o $@
+
+$(BUILD)/user/%.o: user/%.c
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+$(BUILD)/user/%.elf: $(BUILD)/user/progs/%.o $(USER_LIB) user/user.ld
+	$(LD) -nostdlib -T user/user.ld -z max-page-size=0x1000 $(USER_LIB) $< -o $@
+
+# $(call mkiso,<iso>,<kernel cmdline>): GRUB menu with the kernel, every user program as a
+# module named after it, and INITIAL.JOB.
 define mkiso
-	@rm -rf $@.d && mkdir -p $@.d/boot/grub
+	@rm -rf $@.d && mkdir -p $@.d/boot/grub $@.d/boot/user
 	cp $(KERNEL) $@.d/boot/kernel.elf
-	sed 's|@CMDLINE@|$(2)|' grub/grub.cfg > $@.d/boot/grub/grub.cfg
+	cp $(USER_ELFS) $@.d/boot/user/
+	cp user/INITIAL.JOB $@.d/boot/INITIAL.JOB
+	{ printf 'set timeout=0\nset default=0\nmenuentry "DOORS" {\n'; \
+	  printf '\tmultiboot2 /boot/kernel.elf %s\n' '$(2)'; \
+	  for p in $(USER_PROGS); do printf '\tmodule2 /boot/user/%s.elf %s\n' $$p $$p; done; \
+	  printf '\tmodule2 /boot/INITIAL.JOB INITIAL.JOB\n\tboot\n}\n'; } > $@.d/boot/grub/grub.cfg
 	grub-mkrescue -o $@ $@.d 2>/dev/null
 endef
 
-$(ISO): $(KERNEL) grub/grub.cfg
+$(ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 	$(call mkiso,$@,)
 
-$(TEST_ISO): $(KERNEL) grub/grub.cfg
+$(TEST_ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 	$(call mkiso,$@,test)
 
 run: $(ISO)
@@ -110,4 +146,4 @@ test: $(TEST_ISO)
 clean:
 	rm -rf $(BUILD)
 
--include $(OBJS:.o=.d)
+-include $(OBJS:.o=.d) $(wildcard $(BUILD)/user/*/*.d)

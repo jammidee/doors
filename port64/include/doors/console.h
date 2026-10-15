@@ -23,6 +23,7 @@ void serial_write(const char *s);
 
 void console_putc(char c);
 void console_write(const char *s);
+void console_write_n(const char *s, U64 n);
 int  kprintf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 NORETURN void panic(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 

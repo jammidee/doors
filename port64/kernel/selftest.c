@@ -4,6 +4,7 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/job.h>
 #include <doors/kernel.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
@@ -762,6 +763,154 @@ static void test_cross_job(void)
 	kprintf("DOORS: M5 OK\n");
 }
 
+/* ======================================================================== M6 */
+
+/* KECHO: a kernel service user programs can call. pData1/pData2 come from the user job and are
+   aliased into job 1 by the kernel's WaitMsg. */
+static U32 kecho_exch;
+
+static void kecho_service(void *unused)
+{
+	static const char prefix[] = "kernel got: ";
+	U64 m[2];
+
+	(void)unused;
+	AllocExch(&kecho_exch);
+	RegisterSvc("KECHO   ", kecho_exch);
+	for (;;) {
+		struct RqBlk *r;
+		U64 i, n = 0;
+
+		if (WaitMsg(kecho_exch, m) && !m[0])
+			continue;
+		r = (struct RqBlk *)(uintptr_t)m[0];
+		for (i = 0; i < sizeof(prefix) - 1 && n < r->cbData2; i++)
+			r->pData2[n++] = (U8)prefix[i];
+		for (i = 0; i < r->cbData1 && n < r->cbData2; i++)
+			r->pData2[n++] = r->pData1[i];
+		if (n < r->cbData2)
+			r->pData2[n] = 0;
+		Respond(m[0], ErcOk);
+	}
+}
+
+static const struct job *wait_job(U32 job, U32 ticks)
+{
+	const struct job *j = job_get(job);
+
+	while (j && j->alive && ticks--)
+		Sleep(1);
+	return j;
+}
+
+static U32 run(const char *name)
+{
+	U32 job = 0;
+	erc_t e = LoadNewJob(name, (U32)strlen(name), &job);
+
+	CHECK(e == ErcOk, "LoadNewJob(%s): error %u", name, e);
+	return job;
+}
+
+static struct msg_stats m6_base;
+static U64 m6_pages;
+
+static void test_user_hello(void)
+{
+	const struct job *j;
+	erc_t e;
+	U32 job;
+
+	task_create("kecho", kecho_service, NULL, 15, 1, &e);
+	CHECK(svc_registered("KECHO   "), "KECHO service did not start");
+
+	CHECK(LoadNewJob("nosuch", 6, &job) == ErcNoSuchFile, "LoadNewJob of a missing program");
+	CHECK(LoadNewJob("INITIAL.JOB", 11, &job) == ErcBadRunFile, "a text file loaded as a program");
+	job = run("hello");
+	j = wait_job(job, 500);
+	CHECK(j && !j->alive, "hello did not finish");
+	CHECK(j->exit_erc == ErcOk, "hello exited with %u", j->exit_erc);
+
+	/* Baseline for the leak check, taken after hello: its KECHO request made KECHO (job 1)
+	   alias a user buffer, which created page tables in job 1's user half. Those are kept for
+	   reuse (like the OS region's tables), so they are not counted as a leak. */
+	msg_get_stats(&m6_base);
+	m6_pages = pmm_free_pages();
+	kprintf("M6: hello ok (job %u ran in ring 3, used SYSCALL, a kernel service, and exited 0)\n",
+		job);
+}
+
+static void test_user_badptr(void)
+{
+	const struct job *j;
+	U32 job = run("badptr");
+
+	j = wait_job(job, 500);
+	CHECK(j && !j->alive, "badptr did not end");
+	CHECK(j->exit_erc == ErcCpuFault + 14, "badptr ended with %u, expected %u (page fault)",
+	      j->exit_erc, ErcCpuFault + 14);
+	kprintf("M6: bad pointers ok (rejected with errors; the faulting job was ended, the kernel "
+		"kept running)\n");
+}
+
+static void test_user_fpu(void)
+{
+	const struct job *a, *b;
+	U32 ja = run("fpu"), jb = run("fpu");
+
+	a = wait_job(ja, 1000);
+	b = wait_job(jb, 1000);
+	CHECK(a && b && !a->alive && !b->alive, "fpu jobs did not finish");
+	CHECK(a->exit_erc == 0 && b->exit_erc == 0, "fpu jobs exited with %u / %u", a->exit_erc,
+	      b->exit_erc);
+	kprintf("M6: FPU/SSE ok (two jobs, results bit-identical across task switches)\n");
+}
+
+static void test_user_service(void)
+{
+	const struct job *s, *c;
+	U32 js = run("upsvc"), jc, t;
+
+	for (t = 0; t < 200 && !svc_registered("UPCASE  "); t++)
+		Sleep(1);
+	CHECK(svc_registered("UPCASE  "), "user-mode UPCASE service did not register");
+	jc = run("upcli");
+	c = wait_job(jc, 500);
+	s = wait_job(js, 500);
+	CHECK(c && !c->alive && c->exit_erc == 0, "upcli failed (%u)", c ? c->exit_erc : 0);
+	CHECK(s && !s->alive && s->exit_erc == 0, "upsvc failed (%u)", s ? s->exit_erc : 0);
+	kprintf("M6: user-mode service ok (job %u served job %u through Request/Respond)\n", js, jc);
+}
+
+static void test_killjob(void)
+{
+	const struct job *j;
+	U32 job = run("spinner");
+	struct msg_stats s;
+
+	Sleep(20);
+	CHECK(job_task_count(job) == 2, "spinner has %u tasks, expected 2", job_task_count(job));
+	CHECK(KillJob(job) == ErcOk, "KillJob failed");
+	j = job_get(job);
+	CHECK(!j->alive && j->exit_erc == ErcOpCancel, "killed job: alive %u, error %u", j->alive,
+	      j->exit_erc);
+	Sleep(2);				/* let the zombies be reaped */
+	CHECK(job_task_count(job) == 0, "%u tasks of the killed job left", job_task_count(job));
+	CHECK(KillJob(job) == ErcBadJobNum, "KillJob of a dead job accepted");
+
+	msg_get_stats(&s);
+	CHECK(s.exch_free == m6_base.exch_free && s.lb_free == m6_base.lb_free &&
+	      s.rqb_free == m6_base.rqb_free && s.svc_used == m6_base.svc_used && !s.tmr_used,
+	      "messaging objects leaked (exch %u/%u, lb %u/%u, rqb %u/%u, svc %u/%u, tmr %u)",
+	      s.exch_free, m6_base.exch_free, s.lb_free, m6_base.lb_free, s.rqb_free,
+	      m6_base.rqb_free, s.svc_used, m6_base.svc_used, s.tmr_used);
+	CHECK(pmm_free_pages() == m6_pages, "pages leaked by 6 jobs: %ld",
+	      (long)(m6_pages - pmm_free_pages()));
+	kprintf("M6: KillJob ok (2 tasks, exchange and memory of the spinning job reclaimed)\n");
+	kprintf("M6: no leaks after 6 more jobs (pages, exchanges, link blocks, request blocks)\n");
+	kprintf("DOORS: M6 OK\n");
+}
+
 /* Last test: overflow the kernel stack into its guard page. The #PF can't push its frame on
    the dead stack, so the CPU raises #DF, which runs on its own IST stack. */
 
@@ -816,6 +965,12 @@ void selftest_run(void)
 	test_kbd_messages();
 	test_request();
 	test_cross_job();
+
+	test_user_hello();
+	test_user_badptr();
+	test_user_fpu();
+	test_user_service();
+	test_killjob();
 
 	isr_register(8, df_handler);
 	recurse(0);
