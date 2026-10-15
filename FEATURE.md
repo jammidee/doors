@@ -1,12 +1,12 @@
-# jammios Features
+# DOORS Features
 
-jammios is based on **MMURTL V1.0** (Message-based MUltitasking Real-Time kerneL) by
+**DOORS** (developed in the jammios repository, formerly MMURTL) is based on **MMURTL V1.0** (Message-based MUltitasking Real-Time kerneL) by
 Richard A. Burgess, which is in the public domain. This file lists what the current 32-bit system does and
 what the planned 64-bit port adds. The port is described in [docs/PORT64_PLAN.md](docs/PORT64_PLAN.md).
 
 ---
 
-## Current features (32-bit, MMURTL V1.0)
+## Current features (32-bit, inherited from MMURTL V1.0)
 
 ### Kernel
 - **Message-based microkernel design.** Tasks talk through *exchanges*, which are mailboxes that queue

@@ -17,5 +17,5 @@ if [ "${1:-}" = "--rebuild" ]; then shift; rm -f "$fd" "$hd"; fi
 exec qemu-system-i386 -name "MMURTL V1.0" -m 16 -net none \
 	-drive file="$fd",if=floppy,format=raw \
 	-drive file="$hd",if=none,id=hd0,format=raw \
-	-device ide-hd,drive=hd0,bus=ide.0,unit=0,cyls=60,heads=16,secs=63,bios-chs-trans=none \
+	-device ide-hd,drive=hd0,bus=ide.0,unit=0,cyls=216,heads=16,secs=17,bios-chs-trans=none \
 	-boot a -monitor unix:/tmp/mmurtl.mon,server,nowait "$@"

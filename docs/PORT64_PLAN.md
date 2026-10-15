@@ -1,6 +1,6 @@
-# MMURTL x86-64 Port Plan
+# DOORS x86-64 Port Plan
 
-Goal: a 64-bit (long mode) MMURTL that keeps the original architecture — message-based kernel
+Goal: a 64-bit (long mode) DOORS (formerly MMURTL) that keeps the original MMURTL architecture — message-based kernel
 with exchanges, `Request`/`Respond`, named system services, jobs with private address
 spaces — and runs on QEMU first, then real hardware.
 
@@ -59,7 +59,7 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
       Set CR4.PAE, EFER.LME, CR0.PG, and do a far jump to 64-bit code.
 - [ ] 64-bit GDT: null, kernel code/data, user data/code (ordered for SYSRET), TSS.
 - [ ] VGA text console (port `VIDEO.ASM`: `TTYOut`, `PutVidChars`, cursor).
-- **Done when:** QEMU shows "MMURTL/64" banner.
+- **Done when:** QEMU shows the "DOORS" 64-bit banner.
 
 ### Phase 2 — Interrupts and time
 - [ ] 64-bit IDT. Port the exception handlers from `EXCEPT.ASM`, using IST stacks for #DF/#NMI.
@@ -143,7 +143,7 @@ Steps:
       the image on the host. It must come back clean.
 - Unsupported features (inline data, encryption, compression and similar) refuse a rw mount and allow ro
       where safe. Mount checks incompat flags.
-- **Done when:** MMURTL boots from an ext4 root, the CLI copies/renames/deletes files with long names,
+- **Done when:** DOORS boots from an ext4 root, the CLI copies/renames/deletes files with long names,
   files larger than 4 GB work, and `e2fsck` reports the image clean after the stress test.
 
 ### Phase 8 — User land
@@ -175,7 +175,7 @@ Steps:
 - **New error codes** for the VFS/ext4 (for example "unsupported feature" or "needs recovery") go above the existing
   file system `Erc*` range in `MOSEDF.INC`. Existing codes keep their meaning.
 - **Open:** confirm ext4 as the native format. Alternatives are ext2 (much simpler, but no extents or journal) or a
-  custom MMURTL format (no host tooling).
+  custom DOORS format (no host tooling).
 
 ## Module mapping (original → port64)
 

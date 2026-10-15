@@ -2,12 +2,17 @@
 
 ## What this is
 
-MMURTL V1.0 — Richard A. Burgess's message-based, multitasking, real-time 32-bit x86
+**DOORS** is the operating system developed in this repository (jammios). It was formerly MMURTL:
+it starts from MMURTL V1.0, Richard A. Burgess's message-based, multitasking, real-time 32-bit x86
 protected-mode OS from the book *Developing Your Own 32-bit Operating System* (1991–1999,
 now public domain). Everything here is DOS-era: 8.3 upper-case filenames, `.BAT` builds,
 tools that run under MS-DOS.
 
-**Active goal:** port MMURTL to x86-64 (long mode). [PLAN.md](PLAN.md) is the execution plan:
+**Naming:** use **DOORS** for our OS, including docs, new code, banners and the 64-bit port. Use **MMURTL**
+only for Burgess's original V1.0 code and its real file names (`MMURTL.RUN`, `MMURTL.ATF`, …), which are
+not renamed.
+
+**Active goal:** port DOORS to x86-64 (long mode). [PLAN.md](PLAN.md) is the execution plan:
 milestones M0–M10, acceptance checks, workflow. [docs/PORT64_PLAN.md](docs/PORT64_PLAN.md) is the
 technical design. Read both before doing any porting work, and keep the milestone table and the phase
 checklists up to date. Decisions already made:

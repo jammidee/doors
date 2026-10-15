@@ -1,13 +1,13 @@
-# Plan: jammios 64-bit
+# Plan: DOORS 64-bit
 
-How the 64-bit version of jammios (MMURTL) gets built. This is the execution plan: strategy,
+How the 64-bit version of DOORS (formerly MMURTL) gets built. This is the execution plan: strategy,
 milestones, verification and workflow. The technical design (module mapping, data structures, file
 system details) is in [docs/PORT64_PLAN.md](docs/PORT64_PLAN.md), and daily progress goes in [devlogs/](devlogs/).
 
 ## Goal
 
-A 64-bit (x86-64 long mode) jammios that:
-- keeps MMURTL's design: exchanges, messages, `Request`/`Respond`, named services, jobs with their own
+A 64-bit (x86-64 long mode) DOORS that:
+- keeps the MMURTL design: exchanges, messages, `Request`/`Respond`, named services, jobs with their own
   address spaces;
 - keeps **every public API name, parameter order and error code**, with only pointer and size types widening;
 - uses a **modern file system (ext4)** behind a VFS, keeping FAT for exchanging files;
@@ -34,8 +34,8 @@ Each milestone has a demo (what you'll see) and acceptance checks (what must pas
 
 | # | Milestone | Demo | Acceptance |
 |---|---|---|---|
-| M0 | **Baseline** ✅ (mostly) | Original MMURTL boots in QEMU; CLI `dir` on A:/C: | `docs/SMOKE_TEST.md` written and passing on 32-bit |
-| M1 | **Hello, long mode** | `MMURTL/64` banner from GRUB-booted kernel | Boots via `make run`; serial log matches; triple-fault-free on QEMU `-d int` |
+| M0 | **Baseline** ✅ (mostly) | Original MMURTL V1.0 boots in QEMU; CLI `dir` on A:/C: | `docs/SMOKE_TEST.md` written and passing on 32-bit |
+| M1 | **Hello, long mode** | `DOORS` 64-bit banner from GRUB-booted kernel | Boots via `make run`; serial log matches; triple-fault-free on QEMU `-d int` |
 | M2 | **Interrupts & time** | Ticking clock and keyboard echo | Exceptions print register dumps; PIT 10 ms tick matches original rate |
 | M3 | **Memory** | Free/used page stats on screen | Allocator self-tests pass; aliasing works across two address spaces |
 | M4 | **Tasks** | Two kernel tasks at different priorities interleaving | Preemption and priority order match the 32-bit scheduler on the same scenario |
@@ -95,5 +95,5 @@ M7 and M8 can overlap with M9: the CLI can start on FAT before ext4 is finished.
 
 ## Open questions
 
-- Confirm ext4 as the native format (alternatives: ext2 for simplicity, or a custom MMURTL format).
+- Confirm ext4 as the native format (alternatives: ext2 for simplicity, or a custom DOORS format).
 - Keep the `.RUN` executable format as a second loader for old programs, or support ELF64 only?
