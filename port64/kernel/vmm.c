@@ -16,6 +16,7 @@
 #include <doors/console.h>
 #include <doors/mem.h>
 #include <doors/string.h>
+#include <doors/task.h>
 #include <doors/x86.h>
 
 struct addr_space kernel_space = { 0, 1 };
@@ -277,5 +278,7 @@ void vmm_space_destroy(struct addr_space *as)
 void vmm_space_switch(struct addr_space *as)
 {
 	current_space = as;
+	if (current)
+		current->space = as;	/* the task keeps this address space across switches */
 	__asm__ volatile("mov %0, %%cr3" : : "r"(as->pml4) : "memory");
 }

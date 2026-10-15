@@ -8,6 +8,7 @@
 #include <doors/mem.h>
 #include <doors/multiboot2.h>
 #include <doors/string.h>
+#include <doors/task.h>
 #include <doors/x86.h>
 
 #define QEMU_EXIT_PORT 0xF4
@@ -54,6 +55,15 @@ static void boot_info(U64 mbi_phys)
 
 /* ---- interactive mode: a tiny line monitor to try the M2 features by hand ---- */
 
+/* Busy task for "spin": burns CPU (never yields) for the given number of ticks, then exits. */
+static void spin_task(void *ticks)
+{
+	U64 end = timer_ticks() + (U64)(uintptr_t)ticks;
+
+	while (timer_ticks() < end)
+		;
+}
+
 static void cmd(const char *line)
 {
 	if (line[0] == '\0')
@@ -62,6 +72,8 @@ static void cmd(const char *line)
 		kprintf("help   this list\n"
 			"ticks  show the 10 ms tick counter\n"
 			"mem    free memory (QueryPages) and an AllocOSPage round trip\n"
+			"tasks  task list and scheduler statistics\n"
+			"spin   start two busy tasks for 3 s (watch time slicing in 'tasks')\n"
 			"int3   breakpoint exception (handled, execution continues)\n"
 			"pf     page fault at 0xdead0000 (register dump + panic)\n"
 			"div0   divide error (register dump + panic)\n");
@@ -82,6 +94,29 @@ static void cmd(const char *line)
 			QueryPages(&left);
 			kprintf("after DeAllocPage %u\n", left);
 		}
+	} else if (!strcmp(line, "tasks")) {
+		static const char *const states[] = { "free", "ready", "running", "sleeping",
+						      "blocked", "dead" };
+		struct sched_stats s;
+		U32 i;
+
+		kprintf("Task  Job  Pri  State     CPU ticks  Name\n");
+		for (i = 0; i < MAX_TASKS; i++) {
+			const struct task *t = task_by_index(i);
+
+			if (t)
+				kprintf("%4u  %3u  %3u  %-8s  %9lu  %s\n", t->tid, t->job, t->priority,
+					states[t->state], t->ticks, t->name);
+		}
+		sched_get_stats(&s);
+		kprintf("Switches %lu (preemptive %lu), idle ticks %lu, ready %u\n",
+			s.switches, s.slices, s.idle_ticks, s.ready);
+	} else if (!strcmp(line, "spin")) {
+		static erc_t e;
+
+		task_create("spin-a", spin_task, (void *)300, 25, 1, &e);
+		task_create("spin-b", spin_task, (void *)300, 25, 1, &e);
+		kprintf("started spin-a and spin-b (priority 25); kmain runs at 20\n");
 	} else if (!strcmp(line, "int3")) {
 		__asm__ volatile("int3");
 		kprintf("back from the breakpoint handler\n");
@@ -111,7 +146,7 @@ static NORETURN void interactive(void)
 		int c = kbd_getc();
 
 		if (c < 0) {
-			hlt();
+			Sleep(1);	/* poll every 10 ms; lets lower-priority tasks run (M5: wait on the keyboard exchange) */
 			continue;
 		}
 		if (c == '\n') {
@@ -148,6 +183,7 @@ void kmain(U32 magic, U64 mbi_phys)
 	gdt_init();
 	idt_init();
 	pic_init();
+	sched_init();		/* kmain becomes task 1; before the timer starts calling sched_tick */
 	pit_init(TICK_HZ);
 	kbd_init();
 	sti();

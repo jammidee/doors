@@ -35,6 +35,21 @@ static inline void wrmsr(U32 msr, U64 v)
 #define EFER_NXE (1ULL << 11)
 #define EFER_LMA (1ULL << 10)
 
+/* Interrupt-flag save/restore: the kernel's only lock until SMP. Nests correctly. */
+static inline U64 irq_save(void)
+{
+	U64 f;
+
+	__asm__ volatile("pushfq; pop %0; cli" : "=r"(f) : : "memory");
+	return f;
+}
+
+static inline void irq_restore(U64 f)
+{
+	if (f & 0x200)
+		__asm__ volatile("sti" : : : "memory");
+}
+
 static inline void cli(void) { __asm__ volatile("cli"); }
 static inline void hlt(void) { __asm__ volatile("hlt"); }
 

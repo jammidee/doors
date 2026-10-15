@@ -119,3 +119,12 @@ make debug    # QEMU waits for gdb on :1234
   absolute (`c:\cm32\...`).
 - Git: `.gitattributes` stores the original tree byte-for-byte (`-text`). New files under `tools/`, `port64/`
   and `*.md` use LF.
+
+## DOORS kernel conventions (port64)
+
+- Scheduler (`kernel/sched.c`, `include/doors/task.h`): priority 0 = highest; a 30 ms slice among equal
+  priorities; strictly higher priority runs at once. The scheduler is locked by `irq_save`/`irq_restore`
+  (`x86.h`), which is the only lock (single CPU).
+- Code that can block (Sleep, later WaitMsg) must run in task context, never in an interrupt handler.
+  Interrupt handlers may make tasks ready; the timer may switch tasks inside its IRQ (the EOI is sent first).
+- Waiting loops in tasks should block (`Sleep`, later `WaitMsg`) rather than `hlt`, so lower priorities can run.

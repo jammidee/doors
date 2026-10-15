@@ -33,6 +33,7 @@ struct regs {
 typedef void (*isr_handler_t)(struct regs *r);
 
 void gdt_init(void);
+void tss_set_rsp0(U64 rsp);			/* kernel stack for ring 3 -> 0 entry */
 void idt_init(void);
 void isr_register(U8 vector, isr_handler_t h);
 void irq_register(U8 irq, isr_handler_t h);

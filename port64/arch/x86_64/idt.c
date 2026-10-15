@@ -119,9 +119,12 @@ void isr_dispatch(struct regs *r)
 
 		if (pic_spurious(irq))
 			return;
+		/* Acknowledge first (as MMURTL's IntTimer did before its task switch): a handler may
+		   switch to another task, and this IRQ line must not stay blocked meanwhile.
+		   Interrupts stay disabled until iretq, so this cannot nest. */
+		pic_eoi(irq);
 		if (handlers[v])
 			handlers[v](r);
-		pic_eoi(irq);
 		return;
 	}
 

@@ -16,6 +16,7 @@
 #define HHDM_BASE   0xFFFF800000000000UL	/* direct map of all physical RAM (PML4 256) */
 #define OS_BASE     0xFFFFC00000000000UL	/* AllocOSPage / AllocDMAPage region (PML4 384) */
 #define OS_TOP      0xFFFFC08000000000UL	/* 512 GiB */
+#define STACK_BASE  0xFFFFC08000000000UL	/* task kernel stacks, one guarded slot per task (PML4 385) */
 /* KERNEL_VMA (types.h) 0xFFFFFFFF80000000: kernel image (PML4 511) */
 
 #define DMA_LIMIT   0x1000000UL		/* ISA DMA: below 16 MB */

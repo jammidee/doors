@@ -9,6 +9,7 @@
 #include <doors/mem.h>
 #include <doors/multiboot2.h>
 #include <doors/string.h>
+#include <doors/x86.h>
 
 extern U8 _kernel_end[];	/* linker.ld (virtual) */
 
@@ -137,7 +138,7 @@ static U64 take(U64 first, U64 n)
 	return first * PAGE_SIZE;
 }
 
-U64 pmm_alloc(void)
+static U64 pmm_alloc_nolock(void)
 {
 	U64 lo = DMA_LIMIT / PAGE_SIZE, pg;
 
@@ -154,7 +155,7 @@ U64 pmm_alloc(void)
 	return take(pg, 1);
 }
 
-U64 pmm_alloc_contig(U64 n, U64 limit)
+static U64 pmm_alloc_contig_nolock(U64 n, U64 limit)
 {
 	U64 pg, top = limit / PAGE_SIZE;
 
@@ -166,7 +167,7 @@ U64 pmm_alloc_contig(U64 n, U64 limit)
 	return pg == (U64)-1 ? 0 : take(pg, n);
 }
 
-void pmm_free(U64 phys)
+static void pmm_free_nolock(U64 phys)
 {
 	U64 pg = phys / PAGE_SIZE;
 
@@ -185,3 +186,29 @@ void pmm_remap(void)
 U64 pmm_free_pages(void)  { return nfree; }
 U64 pmm_total_pages(void) { return ntotal; }
 U64 pmm_max_phys(void)    { return npages * PAGE_SIZE; }
+
+/* ---- public entry points: interrupts off while the bitmap changes (see mem.c). ---- */
+
+U64 pmm_alloc(void)
+{
+	U64 f = irq_save(), pa = pmm_alloc_nolock();
+
+	irq_restore(f);
+	return pa;
+}
+
+U64 pmm_alloc_contig(U64 n, U64 limit)
+{
+	U64 f = irq_save(), pa = pmm_alloc_contig_nolock(n, limit);
+
+	irq_restore(f);
+	return pa;
+}
+
+void pmm_free(U64 phys)
+{
+	U64 f = irq_save();
+
+	pmm_free_nolock(phys);
+	irq_restore(f);
+}

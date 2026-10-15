@@ -3,6 +3,7 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/task.h>
 #include <doors/x86.h>
 
 #define PIT_HZ   1193182u
@@ -17,6 +18,7 @@ static void timer_irq(struct regs *r)
 	ticks++;
 	if (ticks % 10 == 0)
 		vga_status_tick(ticks);
+	sched_tick();		/* wake sleepers, time slicing; may switch tasks */
 }
 
 void pit_init(U32 hz)

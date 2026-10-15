@@ -7,6 +7,7 @@
    Memory is zeroed on allocation. */
 
 #include <doors/mem.h>
+#include <doors/x86.h>
 
 static erc_t alloc_run(struct addr_space *as, U64 lo, U64 hi, U32 n, U64 flags, U8 **ret)
 {
@@ -33,18 +34,18 @@ static erc_t alloc_run(struct addr_space *as, U64 lo, U64 hi, U32 n, U64 flags, 
 	return ErcOk;
 }
 
-erc_t AllocOSPage(U32 nPages, U8 **ppMemRet)
+static erc_t AllocOSPage_nolock(U32 nPages, U8 **ppMemRet)
 {
 	return alloc_run(&kernel_space, OS_BASE, OS_TOP, nPages, PTE_W | PTE_NX, ppMemRet);
 }
 
-erc_t AllocPage(U32 nPages, U8 **ppMemRet)
+static erc_t AllocPage_nolock(U32 nPages, U8 **ppMemRet)
 {
 	/* User pages stay executable until the ELF loader (M6) maps code and data separately. */
 	return alloc_run(current_space, USER_BASE, USER_TOP, nPages, PTE_W | PTE_U, ppMemRet);
 }
 
-erc_t AllocDMAPage(U32 nPages, U8 **ppMemRet, U64 *pPhyMemRet)
+static erc_t AllocDMAPage_nolock(U32 nPages, U8 **ppMemRet, U64 *pPhyMemRet)
 {
 	U64 pa, va, i;
 
@@ -79,7 +80,7 @@ static struct addr_space *space_of(U64 va)
 
 /* As in MMURTL: the low 12 bits of pOrigMem are ignored; deallocates as many valid pages as it
    can, freeing physical pages unless they are aliases. */
-erc_t DeAllocPage(U8 *pOrigMem, U32 nPages)
+static erc_t DeAllocPage_nolock(U8 *pOrigMem, U32 nPages)
 {
 	U64 va = (U64)(uintptr_t)pOrigMem & PAGE_MASK;
 	struct addr_space *as = space_of(va);
@@ -100,7 +101,7 @@ erc_t DeAllocPage(U8 *pOrigMem, U32 nPages)
 	return ErcOk;
 }
 
-erc_t QueryPages(U32 *pdPagesLeft)
+static erc_t QueryPages_nolock(U32 *pdPagesLeft)
 {
 	U64 n = pmm_free_pages();
 
@@ -108,7 +109,7 @@ erc_t QueryPages(U32 *pdPagesLeft)
 	return ErcOk;
 }
 
-erc_t GetPhyAdd(U32 JobNum, U8 *LinAdd, U64 *pPhyRet)
+static erc_t GetPhyAdd_nolock(U32 JobNum, U8 *LinAdd, U64 *pPhyRet)
 {
 	struct addr_space *as = job_space(JobNum);
 	U64 va = (U64)(uintptr_t)LinAdd;
@@ -122,7 +123,7 @@ erc_t GetPhyAdd(U32 JobNum, U8 *LinAdd, U64 *pPhyRet)
 	return ErcOk;
 }
 
-erc_t AliasMem(U8 *pMem, U64 dcbMem, U32 dJobNum, U8 **ppAliasRet)
+static erc_t AliasMem_nolock(U8 *pMem, U64 dcbMem, U32 dJobNum, U8 **ppAliasRet)
 {
 	struct addr_space *src = job_space(dJobNum);
 	U64 va = (U64)(uintptr_t)pMem, off = va & ~PAGE_MASK, n, dst, i;
@@ -156,7 +157,7 @@ erc_t AliasMem(U8 *pMem, U64 dcbMem, U32 dJobNum, U8 **ppAliasRet)
 	return ErcOk;
 }
 
-erc_t DeAliasMem(U8 *pAliasMem, U64 dcbAliasBytes, U32 JobNum)
+static erc_t DeAliasMem_nolock(U8 *pAliasMem, U64 dcbAliasBytes, U32 JobNum)
 {
 	U64 va = (U64)(uintptr_t)pAliasMem, n, i;
 	struct addr_space *src = job_space(JobNum);
@@ -177,4 +178,80 @@ erc_t DeAliasMem(U8 *pAliasMem, U64 dcbAliasBytes, U32 JobNum)
 		vmm_unmap(current_space, va + i * PAGE_SIZE);
 	}
 	return ErcOk;
+}
+
+/* ---- public entry points: interrupts off while the page tables and bitmap change, so a
+   task switch can't interleave two memory calls (MMURTL serialised them through an exchange).
+   Internal calls between them (e.g. a failed allocation undoing itself) nest safely. ---- */
+
+erc_t AllocOSPage(U32 nPages, U8 **ppMemRet)
+{
+	U64 f = irq_save();
+	erc_t e = AllocOSPage_nolock(nPages, ppMemRet);
+
+	irq_restore(f);
+	return e;
+}
+
+erc_t AllocPage(U32 nPages, U8 **ppMemRet)
+{
+	U64 f = irq_save();
+	erc_t e = AllocPage_nolock(nPages, ppMemRet);
+
+	irq_restore(f);
+	return e;
+}
+
+erc_t AllocDMAPage(U32 nPages, U8 **ppMemRet, U64 *pPhyMemRet)
+{
+	U64 f = irq_save();
+	erc_t e = AllocDMAPage_nolock(nPages, ppMemRet, pPhyMemRet);
+
+	irq_restore(f);
+	return e;
+}
+
+erc_t DeAllocPage(U8 *pOrigMem, U32 nPages)
+{
+	U64 f = irq_save();
+	erc_t e = DeAllocPage_nolock(pOrigMem, nPages);
+
+	irq_restore(f);
+	return e;
+}
+
+erc_t QueryPages(U32 *pdPagesLeft)
+{
+	U64 f = irq_save();
+	erc_t e = QueryPages_nolock(pdPagesLeft);
+
+	irq_restore(f);
+	return e;
+}
+
+erc_t GetPhyAdd(U32 JobNum, U8 *LinAdd, U64 *pPhyRet)
+{
+	U64 f = irq_save();
+	erc_t e = GetPhyAdd_nolock(JobNum, LinAdd, pPhyRet);
+
+	irq_restore(f);
+	return e;
+}
+
+erc_t AliasMem(U8 *pMem, U64 dcbMem, U32 dJobNum, U8 **ppAliasRet)
+{
+	U64 f = irq_save();
+	erc_t e = AliasMem_nolock(pMem, dcbMem, dJobNum, ppAliasRet);
+
+	irq_restore(f);
+	return e;
+}
+
+erc_t DeAliasMem(U8 *pAliasMem, U64 dcbAliasBytes, U32 JobNum)
+{
+	U64 f = irq_save();
+	erc_t e = DeAliasMem_nolock(pAliasMem, dcbAliasBytes, JobNum);
+
+	irq_restore(f);
+	return e;
 }

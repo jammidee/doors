@@ -98,14 +98,22 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
   including a leak check over two address spaces and a stack overflow caught as #DF on IST1).
 
 ### Phase 4 — Tasks and scheduler (port `KERNEL.ASM` scheduling half)
-- [ ] `struct task` holding the TSS.INC OS fields: exchange, `pJCB`, Tid, priority (0–31), message block,
-      `pLBRet`, next pointer, saved RSP, CR3, debug flag.
-- [ ] `context.asm`: `switch_to(prev, next)`, saving and restoring callee-saved regs, RSP, CR3 (if changed)
-      and the TSS.RSP0 update. FPU/SSE state uses `FXSAVE`, eager at first.
-- [ ] Ready queue with 32 priorities: `enQueueRdy`, `deQueueRdy`, `ChkRdyQ`, preemption on the timer tick
-      with the same policy as the original.
-- [ ] `NewTask`, `SpawnTask`, `SetPriority`, `GetPriority`, `GetTSSExch`.
+- [x] `struct task` (`include/doors/task.h`) with the TSS.INC OS fields: Tid, job, priority (0–31), exchange,
+      debug flag, next link, saved RSP, address space; plus a guarded 16 KB kernel stack per task in its own
+      region (`STACK_BASE`). The message block and `pLBRet` come with messaging (Phase 5).
+- [x] `arch/x86_64/switch.asm`: `switch_to` saves/restores callee-saved regs and RSP; CR3 is changed if the
+      address space differs, and TSS.RSP0 is updated. FPU/SSE saving is not needed yet (kernel is
+      `-mgeneral-regs-only`); **add `FXSAVE` with user mode (Phase 6)**.
+- [x] Ready queue with 32 priorities (0 highest) and MMURTL's timer policy: switch to an equal-or-higher
+      priority ready task after a 3-tick (30 ms) slice. Deliberate change: a task with a strictly higher
+      priority that becomes ready (woken or spawned) runs at once.
+- [x] `NewTask` (kernel code segment only until M6), `SpawnTask` (`fOSCode` only until M6), `SetPriority`,
+      `GetPriority`, `Sleep` (sleep list in the timer; becomes timer blocks + exchanges in Phase 5),
+      `GetTimerTick`. Idle task, exited tasks reaped (stacks freed). `GetTSSExch` → Phase 5.
+- [x] Interrupt-off locking around the page allocator and the MMURTL memory calls (moved from Phase 3).
 - **Done when:** two kernel tasks of different priority interleave output, and preemption works.
+  ✅ 2026-10-16: Sleep(50) back after exactly 50 ticks while two tasks spin; fair round robin (17 slices in
+  50 ticks); 34 switches with 19k register-heavy rounds all correct; stacks reclaimed.
 
 ### Phase 5 — Messaging and IPC (port `KERNEL.ASM` messaging half, `RQBCODE.ASM`, `SVCCODE.ASM`)
 - [ ] Exchanges and link blocks: `AllocExch`, `DeAllocExch`, `SendMsg`, `ISendMsg`, `WaitMsg`, `CheckMsg`.

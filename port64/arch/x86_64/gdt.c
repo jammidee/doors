@@ -38,6 +38,11 @@ struct gdt_ptr {
 
 void gdt_load(const struct gdt_ptr *p, U16 code_sel, U16 data_sel, U16 tss_sel);	/* isr.asm */
 
+void tss_set_rsp0(U64 rsp)
+{
+	tss.rsp[0] = rsp;
+}
+
 void gdt_init(void)
 {
 	U64 base = (U64)(uintptr_t)&tss;

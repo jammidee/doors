@@ -51,6 +51,12 @@ TEST_ARGS := \
 	--expect "M3: address spaces ok" \
 	--expect "M3: stack overflow caught by the guard page" \
 	--expect "DOORS: M3 OK" \
+	--expect "M4: priority ok" \
+	--expect "M4: sleep ok" \
+	--expect "M4: round-robin ok" \
+	--expect "M4: context switch ok" \
+	--expect "M4: NewTask/SpawnTask/SetPriority/GetPriority ok" \
+	--expect "DOORS: M4 OK" \
 	--send "M2: type doors=doors\n"
 
 .PHONY: all run test debug clean

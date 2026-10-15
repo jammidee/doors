@@ -7,6 +7,7 @@
 #include <doors/kernel.h>
 #include <doors/mem.h>
 #include <doors/string.h>
+#include <doors/task.h>
 #include <doors/x86.h>
 
 #define CHECK(cond, ...) do { if (!(cond)) panic(__VA_ARGS__); } while (0)
@@ -238,6 +239,173 @@ static void test_spaces(void)
 	kprintf("M3: address spaces ok (private user halves, AliasMem/DeAliasMem, no leaks)\n");
 }
 
+/* ======================================================================== M4 */
+
+static volatile U64 busy_count[2];
+static volatile bool busy_stop;
+
+static void busy(void *idx)
+{
+	while (!busy_stop)
+		busy_count[(uintptr_t)idx]++;
+}
+
+static void test_round_robin(void)
+{
+	U64 free0 = pmm_free_pages(), t0, dt, lo, hi;
+	U32 n0 = task_count();
+	struct sched_stats s0, s1;
+	erc_t e;
+
+	busy_stop = false;
+	CHECK(task_create("busy-a", busy, (void *)0, 25, 1, &e), "task_create failed (%u)", e);
+	CHECK(task_create("busy-b", busy, (void *)1, 25, 1, &e), "task_create failed (%u)", e);
+	CHECK(busy_count[0] == 0 && busy_count[1] == 0,
+	      "priority 25 tasks ran while the priority 20 task was still running");
+
+	sched_get_stats(&s0);
+	t0 = timer_ticks();
+	Sleep(50);			/* the busy tasks share the CPU meanwhile */
+	dt = timer_ticks() - t0;
+	sched_get_stats(&s1);
+
+	/* kmain outranks them, so it must be back on time even though they never yield. */
+	CHECK(dt >= 50 && dt <= 52, "Sleep(50) took %lu ticks", dt);
+	lo = busy_count[0] < busy_count[1] ? busy_count[0] : busy_count[1];
+	hi = busy_count[0] < busy_count[1] ? busy_count[1] : busy_count[0];
+	CHECK(lo > 0, "a busy task never ran (%lu / %lu)", busy_count[0], busy_count[1]);
+	CHECK(hi <= 3 * lo, "unfair time slicing (%lu / %lu)", busy_count[0], busy_count[1]);
+	CHECK(s1.slices - s0.slices >= 5, "only %lu time-slice switches in 50 ticks",
+	      s1.slices - s0.slices);
+
+	busy_stop = true;
+	Sleep(5);			/* let them see the flag and exit */
+	CHECK(task_count() == n0, "tasks did not exit (%u, expected %u)", task_count(), n0);
+	CHECK(pmm_free_pages() == free0, "task stacks leaked %ld pages",
+	      (long)(free0 - pmm_free_pages()));
+	kprintf("M4: sleep ok (Sleep(50) returned after %lu ticks while 2 tasks spun)\n", dt);
+	kprintf("M4: round-robin ok (busy-a %lu, busy-b %lu loops, %lu time slices; stacks freed)\n",
+		busy_count[0], busy_count[1], s1.slices - s0.slices);
+}
+
+static volatile U32 order[4], norder;
+
+static void mark_task(void *tag)
+{
+	order[norder++] = (U32)(uintptr_t)tag;
+}
+
+static void test_priority(void)
+{
+	erc_t e;
+
+	norder = 0;
+	task_create("high", mark_task, (void *)5, 5, 1, &e);
+	CHECK(norder == 1 && order[0] == 5,
+	      "priority 5 task did not run before task_create returned");
+	task_create("low", mark_task, (void *)30, 30, 1, &e);
+	CHECK(norder == 1, "priority 30 task ran while the priority 20 task was running");
+	Sleep(2);
+	CHECK(norder == 2 && order[1] == 30, "priority 30 task did not run while kmain slept");
+	kprintf("M4: priority ok (higher priority runs at once, lower waits until kmain blocks)\n");
+}
+
+/* Context integrity: two equal-priority tasks repeat a register-heavy calculation while being
+   time-sliced against each other; every round must match kmain's reference result. */
+static U64 mix(U64 n)
+{
+	U64 a = 1, b = 2, c = 3, d = 4, i;
+
+	for (i = 0; i < n; i++) {
+		a = a * 6364136223846793005UL + i;
+		b ^= a >> 7;
+		c += b * 31 + (a & 0xFF);
+		d = (d << 3) ^ (c >> 5) ^ i;
+	}
+	return a ^ b ^ c ^ d;
+}
+
+#define MIX_N 20000
+
+static U64 mix_ref, mix_until;
+static volatile U32 mix_bad, mix_done;
+static volatile U64 mix_rounds;
+
+static void mix_task(void *unused)
+{
+	(void)unused;
+	while (timer_ticks() < mix_until) {	/* ~20 time slices each */
+		if (mix(MIX_N) != mix_ref)
+			mix_bad++;
+		mix_rounds++;
+	}
+	mix_done++;
+}
+
+static void test_context(void)
+{
+	struct sched_stats s0, s1;
+	erc_t e;
+	U64 waited = 0;
+
+	mix_ref = mix(MIX_N);
+	mix_bad = mix_done = 0;
+	mix_rounds = 0;
+	mix_until = timer_ticks() + 60;
+	sched_get_stats(&s0);
+	task_create("mix-a", mix_task, NULL, 25, 1, &e);
+	task_create("mix-b", mix_task, NULL, 25, 1, &e);
+	while (mix_done < 2 && waited < 3000) {
+		Sleep(10);
+		waited += 10;
+	}
+	sched_get_stats(&s1);
+	CHECK(mix_done == 2, "mix tasks did not finish in 30 s");
+	CHECK(mix_bad == 0, "%u rounds computed a wrong result: registers corrupted", mix_bad);
+	CHECK(s1.switches - s0.switches >= 10, "too few switches (%lu) to prove anything",
+	      s1.switches - s0.switches);
+	CHECK(mix_rounds >= 10, "only %lu rounds computed", mix_rounds);
+	kprintf("M4: context switch ok (%lu rounds by 2 tasks, all correct, across %lu switches)\n",
+		mix_rounds, s1.switches - s0.switches);
+}
+
+static volatile bool newtask_ran;
+
+static void newtask_entry(void)
+{
+	newtask_ran = true;
+}
+
+static void test_task_calls(void)
+{
+	struct sched_stats s0, s1;
+	U8 p;
+
+	CHECK(GetPriority(&p) == ErcOk && p == 20, "GetPriority: %u, expected 20", p);
+	CHECK(SetPriority(nPRI) == ErcBadPriority, "SetPriority(32) not rejected");
+	CHECK(SetPriority(21) == ErcOk && GetPriority(&p) == ErcOk && p == 21, "SetPriority(21)");
+	SetPriority(20);
+	CHECK(NewTask(1, SEL_UCODE, 10, 0, 0, 0, (U64)(uintptr_t)newtask_entry) == ErcNotSupported,
+	      "NewTask with a user code segment accepted before M6");
+	CHECK(NewTask(1, SEL_KCODE, 32, 0, 0, 0, (U64)(uintptr_t)newtask_entry) == ErcBadPriority,
+	      "NewTask priority 32 accepted");
+	CHECK(NewTask(1, SEL_KCODE, 10, 0, 0, 0, (U64)(uintptr_t)newtask_entry) == ErcOk &&
+	      newtask_ran, "NewTask(priority 10) did not run at once");
+	newtask_ran = false;
+	CHECK(SpawnTask(newtask_entry, 22, 0, NULL, 1) == ErcOk && !newtask_ran,
+	      "SpawnTask(priority 22) ran before kmain blocked");
+
+	sched_get_stats(&s0);
+	Sleep(20);			/* SpawnTask's task runs and exits, then only idle is left */
+	sched_get_stats(&s1);
+	CHECK(newtask_ran, "SpawnTask task never ran");
+	CHECK(s1.idle_ticks - s0.idle_ticks >= 15, "idle ticks %lu during Sleep(20)",
+	      s1.idle_ticks - s0.idle_ticks);
+	kprintf("M4: NewTask/SpawnTask/SetPriority/GetPriority ok; idle task ran %lu of 20 ticks\n",
+		s1.idle_ticks - s0.idle_ticks);
+	kprintf("DOORS: M4 OK\n");
+}
+
 /* Last test: overflow the kernel stack into its guard page. The #PF can't push its frame on
    the dead stack, so the CPU raises #DF, which runs on its own IST stack. */
 
@@ -279,6 +447,11 @@ void selftest_run(void)
 	test_os_pages();
 	test_dma();
 	test_spaces();
+
+	test_priority();
+	test_round_robin();
+	test_context();
+	test_task_calls();
 
 	isr_register(8, df_handler);
 	recurse(0);
