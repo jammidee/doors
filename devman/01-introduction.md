@@ -1,0 +1,65 @@
+<!-- DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. -->
+# 1. Introduction
+
+## What DOORS is
+
+DOORS is a small operating system kernel with the following ideas, all inherited from MMURTL:
+
+- **Message-based.** Tasks cooperate by sending messages to *exchanges* (mailboxes). System services,
+  including the file system, are tasks that receive *requests* and send back *responses*. Even
+  `Sleep` is a timer message that arrives at the task's own exchange.
+- **Multitasking and real-time.** A priority scheduler with 32 levels (0 is the most urgent). A task
+  with a strictly higher priority runs as soon as it becomes ready. Tasks of equal priority share
+  the CPU in 30 ms slices.
+- **Jobs.** A program runs as a *job*: its own address space, one or more tasks, its open files.
+  When a job ends, DOORS reclaims everything it owned.
+- **Named services.** A task registers an exchange under an 8-character name (`"FILESYS "`,
+  `"UPCASE  "`). Clients send requests to the name. Buffers passed in a request are mapped
+  (*aliased*) into the service's address space, so a service in another job can work on the
+  caller's memory without copying.
+
+## DOORS and MMURTL
+
+MMURTL V1.0 (1991–1999, public domain) is a 32-bit protected-mode OS written for the book
+*Developing Your Own 32-bit Operating System*. It ran under DOS-era tools, used hardware task
+switching and called the kernel through GDT call gates.
+
+DOORS keeps the **interface** and the **design**, and replaces the implementation:
+
+| | MMURTL V1.0 | DOORS 0.8 |
+|---|---|---|
+| CPU mode | 32-bit protected mode | x86-64 long mode, higher-half kernel |
+| Boot | DOS loader / own boot sector | GRUB (Multiboot2), from CD image or disk |
+| Paging | 2-level, 4 GB | 4-level, NX, direct map of all RAM |
+| Task switch | hardware TSS (`JMP FAR`) | software context switch, FPU/SSE state saved |
+| System calls | call gates `CALL FAR` | `SYSCALL`/`SYSRET`, same numbering |
+| Programs | `.RUN` files (DASM) | static ELF64 (GCC) |
+| File systems | FAT12/16, 8.3 names | FAT12/16/32 with long names, **ext4** |
+| File sizes | 32-bit | 64-bit (files > 4 GB) |
+| Bad pointer in a call | could crash the system | returns an error (`ErcBadLinAdd`) |
+
+API names, parameter order and error codes are unchanged. Only types are wider: pointers, sizes,
+file positions and messages are 64-bit. Calls that DOORS adds are numbered after MMURTL's last
+call (see [chapter 8](08-system-calls.md)).
+
+## Status (milestone M8)
+
+Finished and covered by automatic tests:
+
+- Booting in long mode, interrupts, timer, keyboard, VGA text console and serial log.
+- Physical and virtual memory, per-job address spaces, aliasing between jobs, guard pages.
+- Tasks, priorities, time slicing, sleeping.
+- All messaging primitives: exchanges, `SendMsg`/`WaitMsg`/`CheckMsg`, `Request`/`Respond`/
+  `MoveRequest`, named services, `Alarm`/`KillAlarm`.
+- User mode: ELF64 programs in ring 3, a system call layer that checks every pointer, ending
+  a faulting job without harming the system, job cleanup without leaks.
+- ATA disks, MBR/GPT partitions, a block cache, FAT12/16/32 with long names, and ext4 (read
+  and write, without journal). Both are reached through the MMURTL file API.
+
+Not yet available (see [chapter 11](11-limits.md)):
+
+- The MMURTL command line interpreter (CLI), editor and other user programs (milestone M9). Today
+  the user interface is the kernel's built-in [monitor](03-monitor.md).
+- The ext4 journal, booting from an ext4 system disk (M8b).
+- Per-job video screens, keyboard service, `Chain`, debugger, and other calls that return
+  `ErcBadCallGate` for now.

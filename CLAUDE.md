@@ -38,6 +38,9 @@ next steps. Keep it factual and include file:line references and commit hashes.
 | `MSAMPLES/` | Sample apps (CLI, editor, dumbterm, print, service, …) and MMURTL-hosted builds of CM32 and DASM. |
 | `fp32/` | Later addition: real-number math library for CM32. Not part of the original distribution. |
 | `PROBLEMS.TXT` | Author's list of known bugs and unfinished features. |
+| `port64/` | DOORS 64-bit (see below). |
+| `devman/` | DOORS System Manual (Markdown, 11 chapters). Update it when commands, calls, error codes, limits or tools change. |
+| `CHANGELOG.md` | DOORS version history. |
 
 ## Original build (32-bit, under DOS)
 
@@ -110,6 +113,16 @@ make debug    # QEMU waits for gdb on :1234
 - **IPC core:** exchanges, link blocks, request blocks (`RQB.INC`), `Request`/`Respond`/
   `WaitMsg`/`SendMsg`/`CheckMsg`. Services register by name (`RegisterSvc`).
 - Error codes are 32-bit, `0` = OK, defined in `MOSEDF.INC` (`Erc*`).
+
+## Versioning
+
+- `port64/VERSION` holds `MAJOR.MINOR.PATCH`. It is `0.M.P` until the port matches MMURTL: `M` = milestone,
+  `P` = changes within it. M9 (user land, smoke test passing) = `1.0.0`. After that, semantic versioning.
+- Every commit that changes the system bumps the version, adds a `CHANGELOG.md` entry, and is tagged
+  `vX.Y.Z` (annotated). Past milestones are tagged v0.1.0 (M1) … v0.8.0 (M8).
+- The Makefile generates `build/gen/doors/version.h` (`DOORS_VERSION`, `DOORS_COMMIT` from
+  `git describe --always --dirty`). Only `kernel/main.c` includes it: the banner, GRUB menu and the monitor's
+  `ver` command show it.
 
 ## Conventions
 

@@ -5,8 +5,6 @@
 
 #include <doors/types.h>
 
-#define DOORS_VERSION "0.1"
-
 /* Set when the kernel command line contains "test" (make test). */
 extern bool test_mode;
 

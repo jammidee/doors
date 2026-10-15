@@ -14,6 +14,7 @@
 #include <doors/multiboot2.h>
 #include <doors/string.h>
 #include <doors/task.h>
+#include <doors/version.h>		/* generated: build/gen/doors/version.h */
 #include <doors/x86.h>
 
 #define QEMU_EXIT_PORT 0xF4
@@ -36,6 +37,7 @@ static void banner(void)
 	vga_set_title(title);
 	serial_write(title);
 	serial_write("\n");
+	kprintf("Version %s, build %s\n", DOORS_VERSION, DOORS_COMMIT);
 	kprintf("Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines\n");
 	kprintf("Based on MMURTL V1.0 by Richard A. Burgess (public domain)\n\n");
 }
@@ -99,7 +101,7 @@ static void cmd(const char *line)
 	if (line[0] == '\0')
 		return;
 	if (!strcmp(line, "help")) {
-		kprintf("help   this list\n"
+		kprintf("help   this list;  ver  DOORS version and build\n"
 			"ticks  show the 10 ms tick counter\n"
 			"mem    free memory (QueryPages) and an AllocOSPage round trip\n"
 			"tasks  task list and scheduler statistics\n"
@@ -111,6 +113,8 @@ static void cmd(const char *line)
 			"int3   breakpoint exception (handled, execution continues)\n"
 			"pf     page fault at 0xdead0000 (register dump + panic)\n"
 			"div0   divide error (register dump + panic)\n");
+	} else if (!strcmp(line, "ver")) {
+		kprintf("DOORS %s (x86-64), build %s\n", DOORS_VERSION, DOORS_COMMIT);
 	} else if (!strcmp(line, "ticks")) {
 		kprintf("Tick: %lu (%lu.%02lu s since interrupts were enabled)\n",
 			timer_ticks(), timer_ticks() / TICK_HZ, timer_ticks() % TICK_HZ);
