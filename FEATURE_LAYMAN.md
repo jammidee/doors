@@ -85,7 +85,7 @@ natively on today's **64-bit** processors. The plan:
 
 We'll build it in steps. Each step must start up and work before moving on:
 1. ✅ Get the original running and test everything (done)
-2. Start up on a modern 64-bit processor
+2. ✅ Start up on a modern 64-bit processor (done: DOORS now boots in 64-bit mode and shows its banner)
 3. Keyboard, clock and screen
 4. Memory management
 5. Running several programs at once
