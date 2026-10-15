@@ -26,12 +26,17 @@ SECTIONS
 
     .text : AT(ADDR(.text) - KERNEL_VMA) ALIGN(4K)
     {
+        _text_start = .;
         *(.text .text.*)
+        _text_end = .;
     }
 
     .rodata : AT(ADDR(.rodata) - KERNEL_VMA) ALIGN(4K)
     {
+        _rodata_start = .;
         *(.rodata .rodata.*)
+        . = ALIGN(4K);
+        _rodata_end = .;            /* vmm.c maps .text RX, .rodata R, the rest RW */
     }
 
     .data : AT(ADDR(.data) - KERNEL_VMA) ALIGN(4K)

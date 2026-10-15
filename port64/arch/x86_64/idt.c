@@ -90,6 +90,26 @@ void dump_regs(const struct regs *r)
 	kprintf("CR2=%016lx CR3=%016lx\n", cr2, read_cr3());
 }
 
+/* Fault fixups (probe.asm): if a #PF/#GP hit one of the marked probe instructions, resume at
+   its fixup label instead of treating the fault as fatal. */
+extern const U64 probe_fixups[];
+U64 last_fault_addr, last_fault_err;
+
+bool fault_fixup(struct regs *r)
+{
+	const U64 *f;
+
+	for (f = probe_fixups; f[0]; f += 2) {
+		if (r->rip == f[0]) {
+			__asm__ volatile("mov %%cr2, %0" : "=r"(last_fault_addr));
+			last_fault_err = r->error;
+			r->rip = f[1];
+			return true;
+		}
+	}
+	return false;
+}
+
 void isr_dispatch(struct regs *r)
 {
 	U64 v = r->vector;
@@ -109,6 +129,9 @@ void isr_dispatch(struct regs *r)
 		handlers[v](r);
 		return;
 	}
+
+	if ((v == 13 || v == 14) && fault_fixup(r))
+		return;
 
 	if (v < 32) {
 		kprintf("\n*** CPU exception %lu: %s ***\n", v, exc_names[v]);

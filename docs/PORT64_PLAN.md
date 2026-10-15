@@ -81,14 +81,21 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
   #PF dump with CR2=dead0000 err=2.
 
 ### Phase 3 — Memory management (port `MEMCODE.ASM`)
-- [ ] Physical page allocator from the Multiboot2 memory map, replacing the original's PAM bitmap
-      (`sPAM`, `_nPagesFree`). The bitmap idea can stay.
-- [ ] 4-level paging API: `map`, `unmap`, `LinToPhy`, per-job PML4 creation with the kernel half shared.
-- [ ] Re-implement `AllocOSPage`, `AllocPage`, `AllocDMAPage` (below 16 MB for ISA DMA),
-      `DeAllocPage`, `QueryPages`, `GetPhyAdd`, `AliasMem`, `DeAliasMem`. Keep the "alias" AVL bit.
-- [ ] Kernel heap for TCBs, exchanges, link blocks and RQBs. The original uses fixed pools
-      (`nTSS`, `nLB`, `nExch`); keep pools first and add a heap later.
-- **Done when:** an allocate/free/alias self-test passes at boot.
+- [x] Physical page allocator from the Multiboot2 memory map (`kernel/pmm.c`): a bitmap like MMURTL's PAM,
+      covering all RAM; ordinary allocations avoid the < 16 MB DMA zone; pages are zeroed.
+- [x] 4-level paging (`kernel/vmm.c`): own kernel tables (boot identity map dropped), direct map of all
+      RAM at `HHDM_BASE`, kernel image with section permissions (.text RX, .rodata R, rest RW+NX),
+      EFER.NXE + CR0.WP, guard page under the kernel stack; map/unmap/translate/find_free;
+      per-job PML4 with PML4[256..511] shared (all kernel PDPTs created up front).
+- [x] `AllocOSPage`, `AllocPage`, `AllocDMAPage` (contiguous, < 16 MB), `DeAllocPage`, `QueryPages`,
+      `GetPhyAdd`, `AliasMem`, `DeAliasMem` (`kernel/mem.c`) with MMURTL's names, parameters and error
+      codes; the alias AVL bit (bit 9) is kept.
+- [x] Fault-safe `probe_read`/`probe_write` with a fixup table (basis for user-pointer checks in M6).
+- [ ] Kernel heap for TCBs, exchanges, link blocks and RQBs. **Moved to Phase 4**, where those objects
+      appear; start with fixed pools as MMURTL did (`nTSS`, `nLB`, `nExch`), carved from `AllocOSPage`.
+- [ ] Locking around the allocators (MMURTL serialised memory calls through an exchange) — Phase 4.
+- **Done when:** an allocate/free/alias self-test passes at boot. ✅ 2026-10-16 (`make test`, 7 M3 checks,
+  including a leak check over two address spaces and a stack overflow caught as #DF on IST1).
 
 ### Phase 4 — Tasks and scheduler (port `KERNEL.ASM` scheduling half)
 - [ ] `struct task` holding the TSS.INC OS fields: exchange, `pJCB`, Tid, priority (0–31), message block,

@@ -37,6 +37,8 @@ void idt_init(void);
 void isr_register(U8 vector, isr_handler_t h);
 void irq_register(U8 irq, isr_handler_t h);
 void dump_regs(const struct regs *r);
+bool fault_fixup(struct regs *r);		/* resume a faulting probe_read/probe_write */
+extern U64 last_fault_addr, last_fault_err;	/* CR2 and error code of the last fixed-up fault */
 
 void pic_init(void);
 void pic_unmask(U8 irq);

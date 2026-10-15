@@ -2,6 +2,18 @@
 
 #include <doors/console.h>
 #include <doors/multiboot2.h>
+#include <doors/string.h>
+
+static void copy(char *dst, U32 size, const char *src)
+{
+	U32 n = 0;
+
+	while (src[n] && n < size - 1) {
+		dst[n] = src[n];
+		n++;
+	}
+	dst[n] = 0;
+}
 
 static const char *mmap_type(U32 t)
 {
@@ -21,10 +33,9 @@ void mb2_parse(U64 mbi_phys, struct boot_info *bi, bool print)
 	const U8 *p = (const U8 *)mbi + 8;
 	const U8 *end = (const U8 *)mbi + mbi->total_size;
 
-	bi->cmdline = "";
-	bi->loader = "?";
-	bi->mem_usable = 0;
-	bi->mmap_count = 0;
+	memset(bi, 0, sizeof(*bi));
+	bi->loader[0] = '?';
+	bi->mbi_size = mbi->total_size;
 
 	while (p < end) {
 		const struct mb2_tag *tag = (const struct mb2_tag *)p;
@@ -34,10 +45,10 @@ void mb2_parse(U64 mbi_phys, struct boot_info *bi, bool print)
 
 		switch (tag->type) {
 		case MB2_TAG_CMDLINE:
-			bi->cmdline = ((const struct mb2_tag_string *)tag)->string;
+			copy(bi->cmdline, sizeof(bi->cmdline), ((const struct mb2_tag_string *)tag)->string);
 			break;
 		case MB2_TAG_LOADER_NAME:
-			bi->loader = ((const struct mb2_tag_string *)tag)->string;
+			copy(bi->loader, sizeof(bi->loader), ((const struct mb2_tag_string *)tag)->string);
 			break;
 		case MB2_TAG_MMAP: {
 			const struct mb2_tag_mmap *m = (const struct mb2_tag_mmap *)tag;

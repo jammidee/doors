@@ -5,6 +5,7 @@
 #include <doors/console.h>
 #include <doors/cpu.h>
 #include <doors/kernel.h>
+#include <doors/mem.h>
 #include <doors/multiboot2.h>
 #include <doors/string.h>
 #include <doors/x86.h>
@@ -32,9 +33,10 @@ static void banner(void)
 	kprintf("Based on MMURTL V1.0 by Richard A. Burgess (public domain)\n\n");
 }
 
+static struct boot_info bi;
+
 static void boot_info(U64 mbi_phys)
 {
-	struct boot_info bi;
 	U64 efer = rdmsr(MSR_EFER);
 
 	mb2_parse(mbi_phys, &bi, true);
@@ -59,12 +61,27 @@ static void cmd(const char *line)
 	if (!strcmp(line, "help")) {
 		kprintf("help   this list\n"
 			"ticks  show the 10 ms tick counter\n"
+			"mem    free memory (QueryPages) and an AllocOSPage round trip\n"
 			"int3   breakpoint exception (handled, execution continues)\n"
 			"pf     page fault at 0xdead0000 (register dump + panic)\n"
 			"div0   divide error (register dump + panic)\n");
 	} else if (!strcmp(line, "ticks")) {
 		kprintf("Tick: %lu (%lu.%02lu s since interrupts were enabled)\n",
 			timer_ticks(), timer_ticks() / TICK_HZ, timer_ticks() % TICK_HZ);
+	} else if (!strcmp(line, "mem")) {
+		U32 left;
+		U8 *p;
+
+		QueryPages(&left);
+		kprintf("Free: %u pages (%u KB) of %lu; CR3=%lx\n", left, left * 4,
+			pmm_total_pages(), read_cr3());
+		if (AllocOSPage(4, &p) == ErcOk) {
+			QueryPages(&left);
+			kprintf("AllocOSPage(4) -> %p, free now %u; ", p, left);
+			DeAllocPage(p, 4);
+			QueryPages(&left);
+			kprintf("after DeAllocPage %u\n", left);
+		}
 	} else if (!strcmp(line, "int3")) {
 		__asm__ volatile("int3");
 		kprintf("back from the breakpoint handler\n");
@@ -124,6 +141,9 @@ void kmain(U32 magic, U64 mbi_phys)
 	if (magic != MB2_BOOTLOADER_MAGIC)
 		panic("not booted by a Multiboot2 loader (magic %x)", magic);
 	boot_info(mbi_phys);
+
+	pmm_init(mbi_phys, bi.mbi_size);
+	vmm_init();
 
 	gdt_init();
 	idt_init();

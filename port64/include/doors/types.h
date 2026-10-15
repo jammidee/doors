@@ -20,8 +20,10 @@ typedef int64_t  S64;
 typedef uint32_t erc_t;
 #define ErcOk 0
 
-#define KERNEL_VMA 0xFFFFFFFF80000000ULL
-#define PHYS_TO_VIRT(p) ((void *)((uintptr_t)(p) + KERNEL_VMA))   /* first 1 GiB only (M1) */
+#define KERNEL_VMA 0xFFFFFFFF80000000UL
+/* Boot-time only: the boot page tables map the first 1 GiB at KERNEL_VMA. After vmm_init()
+   use phys_to_virt() (mem.h), which goes through the direct map. */
+#define PHYS_TO_VIRT(p) ((void *)((uintptr_t)(p) + KERNEL_VMA))
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof((a)[0]))
 #define NORETURN __attribute__((noreturn))

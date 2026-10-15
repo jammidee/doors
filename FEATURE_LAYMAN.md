@@ -87,7 +87,7 @@ We'll build it in steps. Each step must start up and work before moving on:
 1. ✅ Get the original running and test everything (done)
 2. ✅ Start up on a modern 64-bit processor (done: DOORS now boots in 64-bit mode and shows its banner)
 3. ✅ Keyboard, clock and screen (done: the 64-bit DOORS keeps time 100 times a second, reads the keyboard, and shows a clear error report if something goes wrong)
-4. Memory management
+4. ✅ Memory management (done: DOORS hands out memory safely, keeps each program's memory private, and catches runaway programs before they damage anything)
 5. Running several programs at once
 6. Programs sending messages to each other
 7. Disks, then the new file system

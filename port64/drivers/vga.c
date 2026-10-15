@@ -2,12 +2,13 @@
    scrolling, hardware cursor). The buffer at physical 0xB8000 is reached via the higher half. */
 
 #include <doors/console.h>
+#include <doors/mem.h>
 #include <doors/x86.h>
 
 #define VGA_COLS 80
 #define VGA_ROWS 25
 
-static volatile U16 *const vga = (volatile U16 *)PHYS_TO_VIRT(0xB8000);
+static volatile U16 *vga = (volatile U16 *)PHYS_TO_VIRT(0xB8000);
 static U32 row, col;
 static U8 attr = (BLACK << 4) | LIGHTGRAY;
 
@@ -33,6 +34,11 @@ static void scroll(void)
 	for (; i < VGA_ROWS * VGA_COLS; i++)
 		vga[i] = (U16)(attr << 8) | ' ';
 	row = VGA_ROWS - 1;
+}
+
+void vga_remap(void)
+{
+	vga = (volatile U16 *)phys_to_virt(0xB8000);
 }
 
 void vga_set_color(enum vga_color fg, enum vga_color bg)

@@ -189,8 +189,12 @@ boot_stack:     resb 4096
 boot_stack_top:
 
 ;-----------------------------------------------------------------------------
-; Kernel stack, in the higher half (normal .bss).
-section .bss nobits alloc write align=16
+; Kernel stack, in the higher half (normal .bss), with a guard page below it that vmm.c
+; leaves unmapped: a stack overflow then faults (and becomes a #DF on its own IST stack)
+; instead of silently overwriting other data.
+section .bss nobits alloc write align=4096
 global kernel_stack_top
+global kernel_stack_guard
+kernel_stack_guard: resb 4096
 kernel_stack:   resb 16384
 kernel_stack_top:

@@ -26,7 +26,14 @@ static inline U64 rdmsr(U32 msr)
 	return ((U64)hi << 32) | lo;
 }
 
+static inline void wrmsr(U32 msr, U64 v)
+{
+	__asm__ volatile("wrmsr" : : "c"(msr), "a"((U32)v), "d"((U32)(v >> 32)));
+}
+
 #define MSR_EFER 0xC0000080
+#define EFER_NXE (1ULL << 11)
+#define EFER_LMA (1ULL << 10)
 
 static inline void cli(void) { __asm__ volatile("cli"); }
 static inline void hlt(void) { __asm__ volatile("hlt"); }

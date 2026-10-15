@@ -44,6 +44,13 @@ TEST_ARGS := \
 	--expect "M2: keyboard ok" \
 	--expect "M2: exception dump ok" \
 	--expect "DOORS: M2 OK" \
+	--expect "M3: pmm ok" \
+	--expect "M3: paging ok" \
+	--expect "M3: AllocOSPage/DeAllocPage/QueryPages ok" \
+	--expect "M3: AllocDMAPage ok" \
+	--expect "M3: address spaces ok" \
+	--expect "M3: stack overflow caught by the guard page" \
+	--expect "DOORS: M3 OK" \
 	--send "M2: type doors=doors\n"
 
 .PHONY: all run test debug clean

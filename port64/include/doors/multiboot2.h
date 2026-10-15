@@ -53,11 +53,13 @@ struct mb2_tag_mmap {
 } PACKED;
 
 /* What the kernel keeps from the boot information. */
+/* Copies, so they stay valid after the boot page tables (and their view of the MBI) are gone. */
 struct boot_info {
-	const char *cmdline;
-	const char *loader;
+	char cmdline[128];
+	char loader[64];
 	U64 mem_usable;		/* bytes of available RAM (sum of mmap type 1) */
 	U32 mmap_count;
+	U32 mbi_size;		/* total size of the boot information (kept reserved by the pmm) */
 };
 
 void mb2_parse(U64 mbi_phys, struct boot_info *bi, bool print);

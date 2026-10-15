@@ -75,7 +75,16 @@ make debug    # QEMU waits for gdb on :1234
 
 - Layout: `boot/` (Multiboot2 + 32→64 switch), `kernel/`, `drivers/`, `arch/x86_64/`, `include/doors/`.
 - Memory model: kernel linked at `0xFFFFFFFF80000000` (`-mcmodel=kernel`). The boot code is at physical 1 MiB.
-  The first 1 GiB is mapped at both 0 and the higher half (`PHYS_TO_VIRT`).
+  - Until `vmm_init()`, the boot tables map the first 1 GiB at 0 and at the higher half (`PHYS_TO_VIRT`, boot only).
+  - After it, the kernel's own tables apply. Use `phys_to_virt()` (direct map at `HHDM_BASE`, `include/doors/mem.h`).
+    The low identity map is gone. `.text` is RX, `.rodata` R, the rest RW+NX (CR0.WP on), and the page under the
+    kernel stack is an unmapped guard.
+  - Anything that held a boot-mapped pointer must be remapped at the switch (see `pmm_remap`, `vga_remap`).
+  - Layout: user `0x40000000..`, direct map `0xFFFF800000000000`, OS pages `0xFFFFC00000000000`, kernel image `KERNEL_VMA`.
+- Memory calls keep MMURTL's names and error codes (`AllocPage`, `AllocOSPage`, `AliasMem`, … in `kernel/mem.c`).
+- Use `probe_read`/`probe_write` to touch memory that may not be mapped. They return false instead of faulting.
+- When editing C with escapes (`\n`, `'\0'`), use the Edit tool, not Python/sed one-liners: escapes got mangled
+  that way twice (a literal NUL byte ended up in a source file).
 - Code is freestanding C11 with `-mgeneral-regs-only` (no SSE in the kernel yet) and `-Werror`.
 - Kernel messages go through `kprintf` to the VGA screen and COM1. Each milestone adds self-tests in
   `kernel/selftest.c` (run on cmdline `test`) and `--expect`/`--send` lines to `TEST_ARGS` in the Makefile.
