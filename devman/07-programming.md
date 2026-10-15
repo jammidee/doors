@@ -53,13 +53,24 @@ The monitor prints `Job number N terminated. Error: 0` when the program ends.
 `user/lib/libdoors.c` contains:
 
 - a stub for every system call DOORS supports ([chapter 8](08-system-calls.md));
-- MMURTL's memory helpers, which run in the library without entering the kernel: `CopyData`,
-  `CopyDataR`, `FillData`, `Compare` and `CompareNCS` (`Compare` returns the index of the first
-  difference, or the size if the buffers are equal);
-- a small C library: `memcpy`, `memset`, `memcmp`, `strlen`, and `printf`.
+- MMURTL's helpers, which run in the library without entering the kernel: `CopyData`,
+  `CopyDataR`, `FillData`, `Compare` and `CompareNCS`, and `EditLine`. As in MMURTL, `Compare`
+  returns **-1** when the bytes are equal and otherwise the offset of the first difference.
 
-`printf` prints through `TTYOut`. It understands `%c %s %d %u %x %p %%`, the `l`/`ll` length
-modifiers (`%lu`, `%lx`) and a field width with optional zero padding (`%5u`, `%08lx`).
+`user/lib/libc.c` is a small C library with the headers `<stdio.h>`, `<string.h>`, `<ctype.h>`
+and `<stdlib.h>` (in `user/lib/libc/`), covering what CM32's library offered:
+
+| Header | Functions |
+|---|---|
+| `stdio.h` | `printf`, `sprintf`, `snprintf`, `fprintf`, `vprintf`, `vsprintf`, `vsnprintf`; `fopen`, `fclose`, `fgetc`, `fgets`, `fputc`, `fputs`, `fread`, `fwrite`, `ftell`, `fseek`, `rewind`, `remove`, `rename`, `getc`, `putc`, `putchar`, `puts`; `stdin` (keyboard), `stdout`/`stderr` (the job's screen) |
+| `string.h` | `mem*`, `strlen`, `strcpy`, `strncpy`, `strcat`, `strncat`, `strcmp`, `strncmp`, `strchr`, `strrchr`, `strstr` |
+| `ctype.h` | `isspace`, `isdigit`, `isalpha`, `isalnum`, `isupper`, `islower`, `isxdigit`, `ispunct`, `isgraph`, `isprint`, `iscntrl`, `toupper`, `tolower` (ASCII) |
+| `stdlib.h` | `exit` (= `ExitJob`), `atoi`, `atol`, `strtol`, `strtoul`, `abs`, `labs` |
+
+The formatter understands `%d %i %u %x %X %o %c %s %p %%`, the flags `-` and `0`, a width and a
+precision (also `*`), and `l`/`ll`/`z`/`h`. `fopen` opens MMURTL stream files. `"r"` reads,
+`"w"` creates or empties, `"a"` creates or appends, and a `+` adds write access. Reads are buffered
+512 bytes at a time, and at most 16 files are open through `fopen` at once. There is no `malloc` yet.
 
 Floating point (SSE) may be used: DOORS saves each task's FPU/SSE state.
 
@@ -174,8 +185,24 @@ The client side is in `user/progs/upcli.c` and in [chapter 5](05-messaging.md#ex
 
 ## What is not available yet
 
-`Chain`, `SetExitJob`, `SetPath` and the other calls marked "not yet" in
-[chapter 8](08-system-calls.md) return `ErcBadCallGate`.
+The calls marked "not yet" in [chapter 8](08-system-calls.md) return `ErcBadCallGate`.
+
+## Running other programs: Chain and the exit run file
+
+A job can run several programs one after another, as MMURTL's CLI does:
+
+```c
+SetExitJob("C:\\DOORS\\CLI.ELF", 16);   /* come back to me when the next program exits */
+SetCmdLine("C:\\README.TXT", 13);       /* the next program reads this with GetCmdLine */
+Chain("C:\\BIN\\VIEW.ELF", 15, 0);      /* replace me with VIEW in this job */
+/* Chain returns only if VIEW.ELF can't be loaded */
+```
+
+`Chain` loads the new program into the **same job**. The job keeps its number, screen, keyboard
+buffer, command line, path, user name and exit run file. Its old tasks, exchanges, services, open
+files and memory are released, as when a job ends. When the new program calls `ExitJob` (or returns
+from `main`), DOORS loads the exit run file into the job again. With no exit run file set, the job
+ends. `KillJob`, Ctrl-Alt-Del and a CPU fault always end the job; they never load the exit run file.
 
 ## Screen and keyboard
 

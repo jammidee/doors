@@ -39,6 +39,7 @@ Every call returns an `erc_t` (32-bit). `0` (`ErcOk`) means success. The codes a
 | 70 | ErcBadJobNum | no such job (or a system job) |
 | 71 | ErcInvalidJCB | invalid job control block |
 | 74 | ErcBadRunFile | not a valid program (DOORS: not a loadable static ELF64) |
+| 76 | ErcBadJobParam | a string too long for its job field (`SetPath` 69, `SetUserName` 29, `SetExitJob` 79, `SetSysIn`/`SetSysOut` 49) |
 | 1000 + n | ErcCpuFault | **DOORS:** the job was ended by CPU exception `n`. For example: 1000 divide error, 1006 invalid opcode, 1013 general protection, 1014 page fault |
 
 ## Memory

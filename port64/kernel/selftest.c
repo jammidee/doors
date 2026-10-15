@@ -1517,6 +1517,23 @@ static void test_video_kbd(void)
 		"Ctrl-Alt-PgDn, Ctrl-Alt-Del)\n");
 }
 
+/* M9b: jobtest runs three programs in one job (Chain, then ExitJob loading the exit run file). */
+static void test_job_calls(void)
+{
+	const struct job *j;
+	U32 job, n;
+	char s[80];
+
+	job = run("jobtest");
+	j = wait_job(job, 3000);
+	CHECK(!j->alive && j->exit_erc == 0, "jobtest: %s, error %u", j->alive ? "still running" : "ended",
+	      j->exit_erc);
+	CHECK(GetPath(job, s, &n) == ErcOk && n == 8, "GetPath of the ended job: %u", n);
+	CHECK(fsys_open_count() == 0, "%u files left open after Chain/ExitJob", fsys_open_count());
+	CHECK(Chain("jobtest", 7, 0) == ErcBadJobNum, "Chain from the OS job");
+	kprintf("M9: job calls ok (paths, user name, SysIn/Out, CMOS clock, Chain, exit run file)\n");
+}
+
 static void test_ext4_jobs(void)
 {
 	const struct job *j;
@@ -1600,6 +1617,7 @@ void selftest_run(void)
 	test_ext4_stress();
 	test_ext4_jobs();
 	test_video_kbd();
+	test_job_calls();
 
 	isr_register(8, df_handler);
 	recurse(0);

@@ -51,6 +51,23 @@ erc_t GetJobNum(U32 *pJobNumRet);
 erc_t SetJobName(const char *pName, U32 dcbName);
 erc_t SetCmdLine(const char *pCmd, U32 dcbCmd);
 erc_t GetCmdLine(char *pCmdRet, U32 *pdcbCmdRet);
+#define ErcBadJobParam 76			/* string too long for its JCB field */
+erc_t Chain(const char *pFileName, U32 cbFileName, erc_t dExitError);	/* returns only on error */
+erc_t SetPath(const char *pPath, U32 dcbPath);			/* max 69 */
+erc_t GetPath(U32 JobNum, char *pPathRet, U32 *pdcbPathRet);
+erc_t SetUserName(const char *pUser, U32 dcbUser);		/* max 29 */
+erc_t GetUserName(char *pUserRet, U32 *pdcbUserRet);
+erc_t SetExitJob(const char *pRunFile, U32 dcbRunFile);		/* max 79 */
+erc_t GetExitJob(char *pRunRet, U32 *pdcbRunRet);
+erc_t SetSysIn(const char *pFile, U32 dcbFile);			/* max 49 */
+erc_t GetSysIn(char *pFileRet, U32 *pdcbFileRet);
+erc_t SetSysOut(const char *pFile, U32 dcbFile);		/* max 49 */
+erc_t GetSysOut(char *pFileRet, U32 *pdcbFileRet);
+
+/* CMOS clock (MTIMER.H), BCD: time = sec | min << 8 | hour << 16;
+   date = day of week (0 = Sunday) | day << 8 | month << 16 | year (0-99) << 24 */
+erc_t GetCMOSTime(U32 *pdTimeRet);
+erc_t GetCMOSDate(U32 *pdDateRet);
 
 /* file system (MFILES.H): 64-bit sizes and file positions (LFA) */
 #define ModeRead   0
@@ -133,8 +150,8 @@ erc_t ReadKbd(U32 *pKeyCodeRet, U32 fWait);
 void  CopyData(const void *pSource, void *pDestination, U64 dBytes);
 void  CopyDataR(const void *pSource, void *pDestination, U64 dBytes);
 void  FillData(void *pDest, U64 cBytes, U8 bFill);
-U64   Compare(const void *pS1, const void *pS2, U64 dSize);	/* index of first difference, or dSize */
-U64   CompareNCS(const void *pS1, const void *pS2, U64 dSize);	/* same, ignoring case */
+S64   Compare(const void *pS1, const void *pS2, U64 dSize);	/* -1 if equal, else index of first difference */
+S64   CompareNCS(const void *pS1, const void *pS2, U64 dSize);	/* same, ignoring case of A-Z */
 
 /* raw system call (number from doors/syscalls.def, arguments as U64) */
 U64   doors_syscall(U64 num, const U64 *args);

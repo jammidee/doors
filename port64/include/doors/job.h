@@ -19,12 +19,19 @@
 struct cpu_regs;
 struct regs;
 
+#define ErcBadJobParam 76		/* a string too long for its JCB field */
+
+/* The job control block fields MMURTL kept (JCBRec in MJOB.H). Strings are NUL-terminated here. */
 struct job {
 	bool used;
 	bool alive;
 	erc_t exit_erc;			/* why it ended (ExitJob code, or ErcCpuFault + vector) */
 	char name[16];
 	char cmdline[80];
+	char path[70];			/* SetPath: the default path prefix (CLI) */
+	char user[30];			/* SetUserName */
+	char exit_run[80];		/* SetExitJob: program loaded into the job when it exits */
+	char sysin[50], sysout[50];	/* SetSysIn / SetSysOut */
 };
 
 void job_init(void);
@@ -40,5 +47,16 @@ erc_t GetJobNum(U32 *pJobNumRet);
 erc_t SetJobName(const char *pName, U32 dcbName);
 erc_t SetCmdLine(const char *pCmd, U32 dcbCmd);
 erc_t GetCmdLine(char *pCmdRet, U32 *pdcbCmdRet);
+erc_t Chain(const char *pFileName, U32 cbFileName, erc_t dExitError);
+erc_t SetPath(const char *pPath, U32 dcbPath);
+erc_t GetPath(U32 JobNum, char *pPathRet, U32 *pdcbPathRet);
+erc_t SetUserName(const char *pUser, U32 dcbUser);
+erc_t GetUserName(char *pUserRet, U32 *pdcbUserRet);
+erc_t SetExitJob(const char *pRunFile, U32 dcbRunFile);
+erc_t GetExitJob(char *pRunRet, U32 *pdcbRunRet);
+erc_t SetSysIn(const char *pFile, U32 dcbFile);
+erc_t GetSysIn(char *pFileRet, U32 *pdcbFileRet);
+erc_t SetSysOut(const char *pFile, U32 dcbFile);
+erc_t GetSysOut(char *pFileRet, U32 *pdcbFileRet);
 
 #endif

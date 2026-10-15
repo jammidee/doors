@@ -77,3 +77,30 @@ U32 unix_time(void)
 	rtc_read(&t);
 	return days_from_civil(t.year, t.month, t.day) * 86400U + t.hour * 3600U + t.min * 60U + t.sec;
 }
+
+static U32 to_bcd(U32 v)
+{
+	return (v / 10) << 4 | (v % 10);
+}
+
+/* MMURTL GetCMOSTime: seconds | minutes << 8 | hours << 16, each in BCD. */
+erc_t GetCMOSTime(U32 *pdTimeRet)
+{
+	struct rtc_time t;
+
+	rtc_read(&t);
+	*pdTimeRet = to_bcd(t.sec) | to_bcd(t.min) << 8 | to_bcd(t.hour) << 16;
+	return ErcOk;
+}
+
+/* MMURTL GetCMOSDate: day of week (0 = Sunday) | day << 8 | month << 16 | year (0-99) << 24, BCD. */
+erc_t GetCMOSDate(U32 *pdDateRet)
+{
+	struct rtc_time t;
+	U32 dow;
+
+	rtc_read(&t);
+	dow = (days_from_civil(t.year, t.month, t.day) + 4) % 7;	/* 1970-01-01 was a Thursday */
+	*pdDateRet = to_bcd(dow) | to_bcd(t.day) << 8 | to_bcd(t.month) << 16 | to_bcd(t.year % 100) << 24;
+	return ErcOk;
+}

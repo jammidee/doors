@@ -62,7 +62,7 @@ int main(void)
 	printf("M9: type edit\n");
 	SetXY(0, 12);
 	check("EditLine", EditLine(line, 0, 20, &n, &ex, 0x70) == ErcOk && n == 5 && ex == 0x0D &&
-	      Compare(line, "hello", 5) == 5 && cell(0, 12, 'h', 0x17) && cell(5, 12, ' ', 0x17));
+	      Compare(line, "hello", 5) == -1 && cell(0, 12, 'h', 0x17) && cell(5, 12, ' ', 0x17));
 	check("EditLine bad length", EditLine(line, 0, 81, &n, &ex, 7) == ErcEditParam);
 
 	if (!fails)

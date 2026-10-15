@@ -93,12 +93,16 @@ TEST_ARGS := \
 	--expect "DOORS: M8 OK" \
 	--expect "vidtest: all video and keyboard calls ok" \
 	--expect "M9: video and keyboard ok" \
+	--expect "jobtest: job calls, Chain, exit job and C library ok" \
+	--expect "M9: job calls ok" \
 	--send "M2: type doors=doors\n" \
 	--send "M5: type msg=msg\n" \
 	--send "M9: type kbd=kQ{f1}{up}\n" \
 	--send "M9: type edit=hellx{backspace}o\n"
 
 .PHONY: all run console test debug clean FORCE
+# Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
+.SECONDARY:
 
 all: $(ISO)
 
@@ -134,10 +138,10 @@ $(KERNEL): $(OBJS) linker.ld
 # ---- user programs (port64/user): static ELF64 at 0x40000000, loaded as GRUB boot modules ----
 USER_CFLAGS := -std=c11 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-stack-protector \
                -fno-pic -fno-pie -fno-builtin -mcmodel=small -fno-asynchronous-unwind-tables \
-               -Iinclude -Iuser/lib -MMD -MP
+               -Iinclude -Iuser/lib -Iuser/lib/libc -MMD -MP
 USER_PROGS  := $(basename $(notdir $(wildcard user/progs/*.c)))
 USER_ELFS   := $(USER_PROGS:%=$(BUILD)/user/%.elf)
-USER_LIB    := $(BUILD)/user/lib/crt0.o $(BUILD)/user/lib/libdoors.o
+USER_LIB    := $(BUILD)/user/lib/crt0.o $(BUILD)/user/lib/libdoors.o $(BUILD)/user/lib/libc.o
 
 $(BUILD)/user/lib/crt0.o: user/lib/crt0.asm
 	@mkdir -p $(dir $@)

@@ -156,52 +156,102 @@ static erc_t read_file(const char *path, U32 len, U8 **buf, U64 *size, U32 *npag
 	return erc;
 }
 
-static erc_t start_job(const U8 *img, U64 size, const char *name, U32 nlen, const char *args,
-		       U32 *pJobNumRet);
+/* A program to load. MMURTL loaded a .RUN file by path. DOORS loads an ELF64 program either from a
+   file ("C:\BIN\HELLO.ELF") or, without a drive or directory, from a boot module of that name. */
+struct program {
+	const U8 *img;
+	U64 size;
+	U32 npages;			/* != 0: img came from AllocOSPage (a file) */
+	const char *name, *args;
+	U32 nlen;
+};
 
-/* MMURTL loaded a .RUN file by path. DOORS loads an ELF64 program either from a file
-   ("C:\BIN\HELLO.ELF") or, without a drive, from a boot module of that name. */
-erc_t LoadNewJob(const char *pFileName, U32 cbFileName, U32 *pJobNumRet)
+static erc_t find_program(const char *path, U32 len, struct program *p)
 {
 	const struct boot_module *m;
-	const char *base = pFileName;
-	U32 i, npages = 0;
-	U8 *buf = NULL;
-	U64 size;
+	U8 *buf;
+	U32 i;
 	erc_t erc;
 
-	for (i = 0; i < cbFileName; i++)
-		if (pFileName[i] == ':' || pFileName[i] == '\\' || pFileName[i] == '/')
-			base = pFileName + i + 1;
-	if (base == pFileName) {
-		m = boot_module(pFileName, cbFileName);
+	memset(p, 0, sizeof(*p));
+	p->name = path;
+	for (i = 0; i < len; i++)
+		if (path[i] == ':' || path[i] == '\\' || path[i] == '/')
+			p->name = path + i + 1;
+	if (p->name == path) {
+		m = boot_module(path, len);
 		if (!m)
 			return ErcNoSuchFile;
-		return start_job(phys_to_virt(m->start), m->end - m->start, m->name,
-				 (U32)strlen(m->name), m->args, pJobNumRet);
+		p->img = phys_to_virt(m->start);
+		p->size = m->end - m->start;
+		p->name = m->name;
+		p->nlen = (U32)strlen(m->name);
+		p->args = m->args;
+		return ErcOk;
 	}
-	if ((erc = read_file(pFileName, cbFileName, &buf, &size, &npages)))
+	if ((erc = read_file(path, len, &buf, &p->size, &p->npages)))
 		return erc;
-	erc = start_job(buf, size, base, (U32)(pFileName + cbFileName - base), "", pJobNumRet);
-	DeAllocPage(buf, npages);
-	return erc;
+	p->img = buf;
+	p->nlen = (U32)(path + len - p->name);
+	p->args = "";
+	return ErcOk;
 }
 
-static erc_t start_job(const U8 *img, U64 size, const char *name, U32 nlen, const char *args,
-		       U32 *pJobNumRet)
+static void free_program(struct program *p)
+{
+	if (p->npages)
+		DeAllocPage((U8 *)p->img, p->npages);
+}
+
+/* Load a program into job j: a new address space, the code, the stack, the first task.
+   The job's old address space must be gone. */
+static erc_t build(U32 j, const struct program *p)
 {
 	struct addr_space *as;
 	struct task *t;
-	U64 entry, f;
+	U64 entry;
 	erc_t erc;
-	U32 j;
 	char tname[16];
 
+	as = vmm_space_create(j);
+	if (!as)
+		return ErcNoMem;
+	erc = elf_load(as, p->img, p->size, &entry);
+	if (!erc)
+		erc = map_user_stack(as);
+	if (erc) {
+		vmm_space_destroy(as);
+		return erc;
+	}
+	memset(jobs[j].name, 0, sizeof(jobs[j].name));
+	memcpy(jobs[j].name, p->name, p->nlen < 15 ? p->nlen : 15);
+	memset(tname, 0, sizeof(tname));
+	memcpy(tname, p->name, p->nlen < 15 ? p->nlen : 15);
+	jobs[j].alive = true;
+	t = task_create_user(tname, j, entry, USER_STACK_TOP, DEFAULT_PRIORITY, &erc);
+	if (!t) {
+		vmm_space_destroy(as);
+		jobs[j].alive = false;
+		return erc;
+	}
+	return ErcOk;
+}
+
+erc_t LoadNewJob(const char *pFileName, U32 cbFileName, U32 *pJobNumRet)
+{
+	struct program p;
+	U64 f;
+	erc_t erc;
+	U32 j;
+
+	if ((erc = find_program(pFileName, cbFileName, &p)))
+		return erc;
 	f = irq_save();
 	for (j = FIRST_USER_JOB; j < MAX_JOBS && jobs[j].used; j++)
 		;
 	if (j == MAX_JOBS) {
 		irq_restore(f);
+		free_program(&p);
 		return ErcNoMoreJCBs;
 	}
 	memset(&jobs[j], 0, sizeof(jobs[j]));
@@ -209,30 +259,11 @@ static erc_t start_job(const U8 *img, U64 size, const char *name, U32 nlen, cons
 	irq_restore(f);
 	vid_job_new(j);			/* a blank screen of its own, and an empty key buffer */
 	kbd_job_new(j);
-
-	as = vmm_space_create(j);
-	if (!as) {
-		jobs[j].used = false;
-		return ErcNoMem;
-	}
-	erc = elf_load(as, img, size, &entry);
-	if (!erc)
-		erc = map_user_stack(as);
+	memcpy(jobs[j].cmdline, p.args, strlen(p.args) < 79 ? strlen(p.args) : 79);
+	erc = build(j, &p);
+	free_program(&p);
 	if (erc) {
-		vmm_space_destroy(as);
 		jobs[j].used = false;
-		return erc;
-	}
-	memcpy(jobs[j].name, name, nlen < 15 ? nlen : 15);
-	memcpy(jobs[j].cmdline, args, strlen(args) < 79 ? strlen(args) : 79);
-	jobs[j].alive = true;
-	memset(tname, 0, sizeof(tname));
-	memcpy(tname, name, nlen < 15 ? nlen : 15);
-
-	t = task_create_user(tname, j, entry, USER_STACK_TOP, DEFAULT_PRIORITY, &erc);
-	if (!t) {
-		vmm_space_destroy(as);
-		jobs[j].used = jobs[j].alive = false;
 		return erc;
 	}
 	if (pJobNumRet)
@@ -240,22 +271,29 @@ static erc_t start_job(const U8 *img, U64 size, const char *name, U32 nlen, cons
 	return ErcOk;
 }
 
-/* Tear a job down (see the top of this file). Returns normally unless the caller belongs to it. */
-static void job_end(U32 job, erc_t erc)
+/* Steps 1-4 of the teardown (top of this file). Interrupts are off. */
+static void teardown(U32 job)
 {
 	struct addr_space *as = job_space(job);
-	bool self = current->job == job;
-	U64 f = irq_save();
 
 	sched_kill_job(job);
 	rqb_job_gone(job);
 	svc_job_gone(job);
 	fsys_job_gone(job);
 	exch_free_job(job);
-	if (self)
+	if (current->job == job)
 		vmm_space_switch(&kernel_space);	/* we are about to free the space we run in */
 	if (as)
 		vmm_space_destroy(as);
+}
+
+/* Tear a job down. Returns normally unless the caller belongs to it. */
+static void job_end(U32 job, erc_t erc)
+{
+	bool self = current->job == job;
+	U64 f = irq_save();
+
+	teardown(job);
 	jobs[job].alive = false;
 	jobs[job].exit_erc = erc;
 	vid_job_gone(job);			/* if it was on screen, the monitor (job 1) is shown */
@@ -266,14 +304,63 @@ static void job_end(U32 job, erc_t erc)
 	irq_restore(f);
 }
 
+/* Chain and ExitJob with an exit run file: the calling job's program is replaced by p. The job
+   keeps its number, screen, keys, command line, path, user name and exit run file (MMURTL keeps the
+   JCB); its tasks, exchanges, services, open files and memory go, as at the end of a job. Called by
+   a task of that job; never returns. */
+static NORETURN void replace(struct program *p, erc_t erc)
+{
+	U32 job = current->job;
+	U64 f = irq_save();
+
+	(void)f;
+	teardown(job);
+	jobs[job].exit_erc = erc;
+	if (build(job, p)) {
+		jobs[job].alive = false;
+		vid_job_gone(job);
+		kbd_job_gone(job);
+		kprintf("Job number %u terminated. Error: %u\n", job, erc);
+	}
+	free_program(p);
+	task_exit();
+}
+
+/* MMURTL ExitJob: if an exit run file is set (SetExitJob), it is loaded into this job (that is how
+   the CLI comes back after a program it ran); otherwise the job ends. */
 void ExitJob(erc_t dError)
 {
+	struct job *jb = &jobs[current->job];
+	struct program p;
+
 	if (current->job < FIRST_USER_JOB)
 		panic("ExitJob from the OS job");
+	if (jb->exit_run[0]) {
+		erc_t erc = find_program(jb->exit_run, (U32)strlen(jb->exit_run), &p);
+
+		if (!erc)
+			replace(&p, dError);
+		kprintf("Job %u: exit run file %s: error %u\n", current->job, jb->exit_run, erc);
+	}
 	job_end(current->job, dError);
 	panic("ExitJob returned");
 }
 
+/* MMURTL Chain: run another program in this job (it inherits the command line, path, screen...)
+   and pass dExitError on. Returns only if the program can't be loaded. */
+erc_t Chain(const char *pFileName, U32 cbFileName, erc_t dExitError)
+{
+	struct program p;
+	erc_t erc;
+
+	if (current->job < FIRST_USER_JOB)
+		return ErcBadJobNum;
+	if ((erc = find_program(pFileName, cbFileName, &p)))
+		return erc;
+	replace(&p, dExitError);
+}
+
+/* KillJob always ends the job: its exit run file is not loaded. */
 erc_t KillJob(U32 JobNum)
 {
 	if (JobNum < FIRST_USER_JOB || JobNum >= MAX_JOBS || !jobs[JobNum].alive)
@@ -282,6 +369,8 @@ erc_t KillJob(U32 JobNum)
 	return ErcOk;
 }
 
+/* A CPU exception in ring 3 ends the job (MMURTL entered the debugger). The exit run file is not
+   loaded: the fault arrives in an exception handler, where loading a file can't wait for the disk. */
 void job_fault(struct regs *r, U32 vector)
 {
 	(void)r;
@@ -325,6 +414,45 @@ erc_t GetCmdLine(char *pCmdRet, U32 *pdcbCmdRet)
 	memcpy(pCmdRet, j->cmdline, n);
 	*pdcbCmdRet = n;
 	return ErcOk;
+}
+
+/* The other JCB strings (MMURTL JOBC.C): too long gives ErcBadJobParam, length 0 clears. */
+static erc_t set_str(char *field, U32 size, const char *s, U32 n)
+{
+	if (n > size - 1)
+		return ErcBadJobParam;
+	memset(field, 0, size);
+	memcpy(field, s, n);
+	return ErcOk;
+}
+
+static erc_t get_str(const char *field, char *ret, U32 *pn)
+{
+	U32 n = (U32)strlen(field);
+
+	memcpy(ret, field, n);
+	*pn = n;
+	return ErcOk;
+}
+
+#define ME (&jobs[current->job])
+
+erc_t SetPath(const char *p, U32 n)		{ return set_str(ME->path, sizeof(ME->path), p, n); }
+erc_t SetUserName(const char *p, U32 n)		{ return set_str(ME->user, sizeof(ME->user), p, n); }
+erc_t SetExitJob(const char *p, U32 n)		{ return set_str(ME->exit_run, sizeof(ME->exit_run), p, n); }
+erc_t SetSysIn(const char *p, U32 n)		{ return set_str(ME->sysin, sizeof(ME->sysin), p, n); }
+erc_t SetSysOut(const char *p, U32 n)		{ return set_str(ME->sysout, sizeof(ME->sysout), p, n); }
+erc_t GetUserName(char *p, U32 *n)		{ return get_str(ME->user, p, n); }
+erc_t GetExitJob(char *p, U32 *n)		{ return get_str(ME->exit_run, p, n); }
+erc_t GetSysIn(char *p, U32 *n)			{ return get_str(ME->sysin, p, n); }
+erc_t GetSysOut(char *p, U32 *n)		{ return get_str(ME->sysout, p, n); }
+
+/* GetPath takes a job number (MMURTL: so the CLI can show another job's path). */
+erc_t GetPath(U32 JobNum, char *pPathRet, U32 *pdcbPathRet)
+{
+	if (JobNum >= MAX_JOBS || !jobs[JobNum].used)
+		return ErcBadJobNum;
+	return get_str(jobs[JobNum].path, pPathRet, pdcbPathRet);
 }
 
 /* INITIAL.JOB (MMURTL: \MMSYS\INITIAL.JOB): one program name per line, ';' starts a comment.

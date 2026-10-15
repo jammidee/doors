@@ -12,6 +12,18 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 0.9.1 — 2026-10-16 — M9 step 9b: job calls and C library
+- `Chain` and the exit run file (`SetExitJob`/`GetExitJob`): a program can be replaced inside its
+  job, and `ExitJob` reloads the exit run file. That is how the CLI comes back after a program.
+- `SetPath`/`GetPath`, `SetUserName`/`GetUserName`, `SetSysIn`/`SetSysOut`/`GetSysIn`/`GetSysOut`,
+  `GetCMOSTime`/`GetCMOSDate` (BCD, as MMURTL).
+- C library for programs: `<stdio.h>` (printf family, `fopen`/`fgets`/... over stream files),
+  `<string.h>`, `<ctype.h>`, `<stdlib.h>`.
+- **Fix:** `Compare`/`CompareNCS` now return -1 when the bytes match, as in MMURTL. DOORS returned
+  the length, which MMURTL programs (the CLI's command lookup) would read as a mismatch.
+- Make keeps user object files (they were deleted as intermediates and relinked every time).
+- New `jobtest` program (three programs in one job).
+
 ## 0.9.0 — 2026-10-16 — M9 step 9a: screens and keyboard
 - Every job has its own 80×25 virtual screen (MMURTL `VIDEO.ASM`): `SetVidOwner`, `GetVidOwner`,
   `ClrScr`, `TTYOut` with attributes, `PutVidChars`, `PutVidAttrs`, `GetVidChar`, `SetXY`, `GetXY`,

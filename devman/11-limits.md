@@ -31,7 +31,9 @@
 | Area | State | Planned |
 |---|---|---|
 | CLI, editor, sample programs | not ported. The kernel monitor is the user interface | M9 |
-| `Chain`, `SetExitJob`, paths, user name, redirection | `ErcBadCallGate` | M9 (9b) |
+| `malloc` and `free` | not yet: use `AllocPage` | M9 or later |
+| Redirection of stdin/stdout to files (`SetSysIn`/`SetSysOut`) | the names are stored, nothing is redirected | later |
+| A CPU fault in a program run with `Chain` | ends the whole job; the exit run file (for example the CLI) is not reloaded | later |
 | Keyboard LEDs (Caps/Num/Scroll Lock lights) | not driven; the lock states work | later |
 | Global key requests from programs (MMURTL's debugger keys) | only Ctrl-Alt-PgDn and Ctrl-Alt-Del are handled | M10 |
 | ext4 journal | no journal. A volume that needs recovery mounts read-only | M8b |

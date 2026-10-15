@@ -57,8 +57,8 @@ Signatures use DOORS types. Pointers, sizes, file positions and messages are 64-
 | 42 | CopyData | lib | `CopyData(const void *pSource, void *pDestination, U64 dBytes)` |
 | 43 | CopyDataR | lib | the same, copying from the end (overlapping buffers) |
 | 44 | FillData | lib | `FillData(void *pDest, U64 cBytes, U8 bFill)` |
-| 45 | CompareNCS | lib | `CompareNCS(const void *a, const void *b, U64 n)`: like `Compare`, ignoring case |
-| 46 | Compare | lib | `Compare(const void *a, const void *b, U64 n)`: index of the first difference, or `n` |
+| 45 | CompareNCS | lib | `CompareNCS(const void *a, const void *b, U64 n)`: like `Compare`, ignoring the case of A–Z |
+| 46 | Compare | lib | `Compare(const void *a, const void *b, U64 n)`: **-1** if the `n` bytes are equal (MMURTL), else the offset of the first difference. Returns `S64` |
 
 ## Jobs
 
@@ -66,17 +66,17 @@ Signatures use DOORS types. Pointers, sizes, file positions and messages are 64-
 |---|---|---|---|
 | 51 | LoadNewJob | yes | `LoadNewJob(const char *pFileName, U32 cbFileName, U32 *pJobNumRet)`: boot module name or file path |
 | 78 | GetJobNum | yes | `GetJobNum(U32 *pJobNumRet)` |
-| 79 | ExitJob | yes | `ExitJob(erc_t dError)`: never returns |
+| 79 | ExitJob | yes | `ExitJob(erc_t dError)`: never returns. If an exit run file is set (`SetExitJob`), it is loaded into the same job; otherwise the job ends |
 | 82 | SetCmdLine | yes | `SetCmdLine(const char *pCmd, U32 dcbCmd)`: up to 79 characters |
 | 83 | GetCmdLine | yes | `GetCmdLine(char *pCmdRet, U32 *pdcbCmdRet)` (buffer of 80 bytes is enough) |
 | 105 | SetJobName | yes | `SetJobName(const char *pName, U32 dcbName)` |
 | 106 | KillJob | yes | `KillJob(U32 JobNum)`: ends another job |
 | 73 | GetpJCB | not yet | pointer to a job control block |
-| 80 / 81 | SetUserName / GetUserName | not yet | |
-| 84 / 85 | SetPath / GetPath | not yet | the job's default path (CLI) |
-| 86 / 87 | SetExitJob / GetExitJob | not yet | program to run when the job exits (CLI) |
-| 88–91 | SetSysIn / SetSysOut / GetSysIn / GetSysOut | not yet | standard input/output redirection |
-| 96 | Chain | not yet | replace the running job with another program |
+| 80 / 81 | SetUserName / GetUserName | yes | `SetUserName(const char *pUser, U32 dcbUser)` (max 29) / `GetUserName(char *pUserRet, U32 *pdcbUserRet)` |
+| 84 / 85 | SetPath / GetPath | yes | `SetPath(const char *pPath, U32 dcbPath)` (max 69) / `GetPath(U32 JobNum, char *pPathRet, U32 *pdcbPathRet)`: the job's default path; `GetPath` works for any job |
+| 86 / 87 | SetExitJob / GetExitJob | yes | `SetExitJob(const char *pRunFile, U32 dcbRunFile)` (max 79, 0 clears) / `GetExitJob(char *pRunRet, U32 *pdcbRunRet)`: the program `ExitJob` loads into the job |
+| 88–91 | SetSysIn / SetSysOut / GetSysIn / GetSysOut | yes | the names are kept (max 49) for programs that read them; DOORS itself does not redirect |
+| 96 | Chain | yes | `Chain(const char *pFileName, U32 cbFileName, erc_t dExitError)`: run another program in this job; it keeps the job number, screen, command line, path, user name and exit run file. Returns only if the program can't be loaded |
 
 ## Files
 
@@ -154,7 +154,8 @@ Drivers live in the kernel, so programs can't use these calls.
 | 17 / 18 | AddCallGate / AddIDTGate | not yet (no call gates in DOORS) |
 | 19–23 | EndOfIRQ / MaskIRQ / UnMaskIRQ / SetIRQVector / GetIRQVector | not yet |
 | 31 | MicroDelay | not yet |
-| 33 / 98 / 41 | GetCMOSTime / GetCMOSDate / ReadCMOS | not yet (the kernel reads the clock internally) |
+| 33 / 98 | GetCMOSTime / GetCMOSDate | yes. `GetCMOSTime(U32 *)`: BCD seconds in bits 0–7, minutes 8–15, hours 16–23. `GetCMOSDate(U32 *)`: BCD day of week (0 = Sunday) in bits 0–7, day 8–15, month 16–23, year (0–99) 24–31 |
+| 41 | ReadCMOS | not yet |
 | 35–40, 47, 48 | OutByte / OutWord / OutDWord / InByte / InWord / InDWord / InWords / OutWords | not yet |
 
 ## Adding a system call

@@ -229,7 +229,7 @@ steps, each a release (0.9.x). 1.0.0 = the smoke test passes.
       Ctrl-Alt-Del = kill the job on screen. Kernel output (`kprintf`) is job 1's screen; everything
       written to any screen is also copied to COM1 so tests can see it. The monitor gets MMURTL's status
       line (clock, ticks) and function keys (F1 load CLI, F2 jobs, F3 stats) next to its command line.
-- [ ] **9b: job calls and C library (0.9.1).** `SetPath`/`GetPath`, `SetUserName`/`GetUserName`,
+- [x] **9b: job calls and C library (0.9.1).** `SetPath`/`GetPath`, `SetUserName`/`GetUserName`,
       `SetExitJob`/`GetExitJob`, `Chain`, `SetSysIn`/`SetSysOut`/`GetSysIn`/`GetSysOut`, `GetCMOSTime`/
       `GetCMOSDate`; `EditLine` in the user library (it only uses public calls). libc: `sprintf`, string and
       `ctype` functions, `fopen`/`fgets`/`fclose` over the file calls.

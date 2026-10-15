@@ -60,5 +60,7 @@ struct rtc_time {
 void rtc_read(struct rtc_time *t);
 U32  days_from_civil(U32 y, U32 m, U32 d);	/* days since 1970-01-01 */
 U32  unix_time(void);
+erc_t GetCMOSTime(U32 *pdTimeRet);		/* MMURTL: BCD seconds, minutes, hours */
+erc_t GetCMOSDate(U32 *pdDateRet);		/* MMURTL: BCD day of week, day, month, year */
 
 #endif

@@ -98,6 +98,9 @@ open files (`kernel/job.c`).
 - **Ending a job** (`ExitJob`, `KillJob`, or a CPU fault): the job's tasks stop, its open files
   are closed, its exchanges, services, timers and pending requests are cleaned up, and its memory
   and page tables are freed. The kernel prints `Job number N terminated. Error: E`.
+- **Replacing the program** (`Chain`, or `ExitJob` with an exit run file): the same cleanup, but the
+  job stays. Its number, screen, keys, command line, path, user name and exit run file are kept, and
+  the new program gets a fresh address space and first task (MMURTL kept the JCB the same way).
 - **Faults:** a CPU exception in ring 3 (page fault, divide error, general protection, ...) ends
   the job with error `1000 + vector`. For example, a page fault (vector 14) gives `1014`. The
   system keeps running.

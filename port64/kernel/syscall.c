@@ -14,6 +14,7 @@
    ISendMsg, NewTask, ...), return ErcBadCallGate, MMURTL's answer for an uninitialised gate.
    The memory helpers (CopyData, FillData, Compare...) live in the user library instead. */
 
+#include <doors/blk.h>
 #include <doors/console.h>
 #include <doors/cpu.h>
 #include <doors/fs.h>
@@ -85,6 +86,32 @@ static erc_t out_msg(U64 udst, U64 *m)
 {
 	m[0] = rqb_to_user(m[0]);	/* request handles: the user-visible window */
 	return copy_out(udst, m, 2 * sizeof(U64));
+}
+
+/* JCB string calls: Set*(p, n) with n checked by the kernel call; Get*(p, &n) with p >= 80 bytes. */
+static erc_t set_jcb_str(erc_t (*set)(const char *, U32), U64 up, U64 n)
+{
+	char s[80];
+	erc_t erc;
+
+	if (n >= sizeof(s))
+		return ErcBadJobParam;		/* longer than any JCB field */
+	if (n && (erc = copy_in(s, up, n)))
+		return erc;
+	return set(s, (U32)n);
+}
+
+static erc_t get_jcb_str(erc_t (*get)(char *, U32 *), U64 up, U64 upn)
+{
+	char s[80];
+	U32 n;
+	erc_t erc;
+
+	if ((erc = get(s, &n)))
+		return erc;
+	if ((erc = copy_out(up, s, n)))
+		return erc;
+	return out_u32(upn, n);
 }
 
 /* ---- dispatch ---- */
@@ -230,6 +257,61 @@ U64 syscall_dispatch(U64 n, U64 uargs)
 			a[1] -= k;
 		}
 		return ErcOk;
+	case SYS_SetPath:
+		ARGS(2);
+		return set_jcb_str(SetPath, a[0], a[1]);
+	case SYS_SetUserName:
+		ARGS(2);
+		return set_jcb_str(SetUserName, a[0], a[1]);
+	case SYS_SetExitJob:
+		ARGS(2);
+		return set_jcb_str(SetExitJob, a[0], a[1]);
+	case SYS_SetSysIn:
+		ARGS(2);
+		return set_jcb_str(SetSysIn, a[0], a[1]);
+	case SYS_SetSysOut:
+		ARGS(2);
+		return set_jcb_str(SetSysOut, a[0], a[1]);
+	case SYS_GetUserName:
+		ARGS(2);
+		return get_jcb_str(GetUserName, a[0], a[1]);
+	case SYS_GetExitJob:
+		ARGS(2);
+		return get_jcb_str(GetExitJob, a[0], a[1]);
+	case SYS_GetSysIn:
+		ARGS(2);
+		return get_jcb_str(GetSysIn, a[0], a[1]);
+	case SYS_GetSysOut:
+		ARGS(2);
+		return get_jcb_str(GetSysOut, a[0], a[1]);
+	case SYS_GetPath: {
+		char s[80];
+
+		ARGS(3);
+		if ((erc = GetPath((U32)a[0], s, &v32)))
+			return erc;
+		if ((erc = copy_out(a[1], s, v32)))
+			return erc;
+		return out_u32(a[2], v32);
+	}
+	case SYS_Chain: {
+		char path[MAX_PATH];
+
+		ARGS(3);
+		if (a[1] >= MAX_PATH)
+			return ErcBadFileSpec;
+		if ((erc = copy_in(path, a[0], a[1])))
+			return erc;
+		return Chain(path, (U32)a[1], (erc_t)a[2]);	/* returns only on error */
+	}
+	case SYS_GetCMOSTime:
+		ARGS(1);
+		GetCMOSTime(&v32);
+		return out_u32(a[0], v32);
+	case SYS_GetCMOSDate:
+		ARGS(1);
+		GetCMOSDate(&v32);
+		return out_u32(a[0], v32);
 	case SYS_PutVidChars: {
 		char line[VID_COLS * VID_ROWS];
 

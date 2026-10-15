@@ -1,6 +1,6 @@
 /* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
 /* DOORS user library: system call stubs (numbers from doors/syscalls.def, so they match MMURTL's
-   call gate order), the MMURTL memory helpers, and a small printf on top of TTYOut. */
+   call gate order), the MMURTL memory helpers and EditLine. The C library is in libc.c. */
 
 #include <stdarg.h>
 #include "doors.h"
@@ -70,6 +70,19 @@ erc_t GetJobNum(U32 *p)			{ return CALL(GetJobNum, A(p)); }
 erc_t SetJobName(const char *n, U32 cb)	{ return CALL(SetJobName, A(n), cb); }
 erc_t SetCmdLine(const char *c, U32 cb)	{ return CALL(SetCmdLine, A(c), cb); }
 erc_t GetCmdLine(char *c, U32 *pcb)	{ return CALL(GetCmdLine, A(c), A(pcb)); }
+erc_t Chain(const char *f, U32 cb, erc_t e)	{ return CALL(Chain, A(f), cb, (U64)e); }
+erc_t SetPath(const char *p, U32 cb)	{ return CALL(SetPath, A(p), cb); }
+erc_t GetPath(U32 j, char *p, U32 *pcb)	{ return CALL(GetPath, j, A(p), A(pcb)); }
+erc_t SetUserName(const char *p, U32 cb)	{ return CALL(SetUserName, A(p), cb); }
+erc_t GetUserName(char *p, U32 *pcb)	{ return CALL(GetUserName, A(p), A(pcb)); }
+erc_t SetExitJob(const char *p, U32 cb)	{ return CALL(SetExitJob, A(p), cb); }
+erc_t GetExitJob(char *p, U32 *pcb)	{ return CALL(GetExitJob, A(p), A(pcb)); }
+erc_t SetSysIn(const char *p, U32 cb)	{ return CALL(SetSysIn, A(p), cb); }
+erc_t GetSysIn(char *p, U32 *pcb)	{ return CALL(GetSysIn, A(p), A(pcb)); }
+erc_t SetSysOut(const char *p, U32 cb)	{ return CALL(SetSysOut, A(p), cb); }
+erc_t GetSysOut(char *p, U32 *pcb)	{ return CALL(GetSysOut, A(p), A(pcb)); }
+erc_t GetCMOSTime(U32 *p)		{ return CALL(GetCMOSTime, A(p)); }
+erc_t GetCMOSDate(U32 *p)		{ return CALL(GetCMOSDate, A(p)); }
 
 void ExitJob(erc_t e)
 {
@@ -154,26 +167,26 @@ void CopyDataR(const void *s, void *d, U64 n)	/* copies from the end (overlappin
 
 void FillData(void *d, U64 n, U8 b)		{ memset(d, b, n); }
 
-U64 Compare(const void *a, const void *b, U64 n)
+S64 Compare(const void *a, const void *b, U64 n)
 {
 	const U8 *x = a, *y = b;
 	U64 i;
 
 	for (i = 0; i < n && x[i] == y[i]; i++)
 		;
-	return i;
+	return i == n ? -1 : (S64)i;		/* MMURTL: -1 when all bytes match */
 }
 
 static U8 lower(U8 c) { return c >= 'A' && c <= 'Z' ? (U8)(c + 32) : c; }
 
-U64 CompareNCS(const void *a, const void *b, U64 n)
+S64 CompareNCS(const void *a, const void *b, U64 n)
 {
 	const U8 *x = a, *y = b;
 	U64 i;
 
 	for (i = 0; i < n && lower(x[i]) == lower(y[i]); i++)
 		;
-	return i;
+	return i == n ? -1 : (S64)i;
 }
 
 /* ---- C library (GCC may also call these itself) ---- */
@@ -214,106 +227,6 @@ size_t strlen(const char *s)
 	while (s[n])
 		n++;
 	return n;
-}
-
-/* printf: %c %s %d %u %x %p %%, l/ll, width and '0'. Output goes out with TTYOut. */
-struct obuf {
-	char b[128];
-	U32 n;
-	int total;
-};
-
-static void flush(struct obuf *o)
-{
-	if (o->n)
-		TTYOut(o->b, o->n, 7);
-	o->n = 0;
-}
-
-static void putc_(struct obuf *o, char c)
-{
-	if (o->n == sizeof(o->b))
-		flush(o);
-	o->b[o->n++] = c;
-	o->total++;
-}
-
-static void putnum(struct obuf *o, U64 v, unsigned base, int width, char pad, bool neg)
-{
-	char t[24];
-	int n = 0;
-
-	do {
-		t[n++] = "0123456789abcdef"[v % base];
-		v /= base;
-	} while (v);
-	if (neg)
-		t[n++] = '-';
-	while (width-- > n)
-		putc_(o, pad);
-	while (n)
-		putc_(o, t[--n]);
-}
-
-int printf(const char *fmt, ...)
-{
-	struct obuf o = { .n = 0, .total = 0 };
-	va_list ap;
-
-	va_start(ap, fmt);
-	for (; *fmt; fmt++) {
-		int width = 0, lng = 0;
-		char pad = ' ';
-
-		if (*fmt != '%') {
-			putc_(&o, *fmt);
-			continue;
-		}
-		fmt++;
-		if (*fmt == '0')
-			pad = '0';
-		while (*fmt >= '0' && *fmt <= '9')
-			width = width * 10 + (*fmt++ - '0');
-		while (*fmt == 'l')
-			lng++, fmt++;
-		switch (*fmt) {
-		case 'c':
-			putc_(&o, (char)va_arg(ap, int));
-			break;
-		case 's': {
-			const char *s = va_arg(ap, const char *);
-
-			while (s && *s)
-				putc_(&o, *s++);
-			break;
-		}
-		case 'd': {
-			S64 v = lng ? va_arg(ap, S64) : va_arg(ap, int);
-
-			putnum(&o, v < 0 ? (U64)(-(v + 1)) + 1 : (U64)v, 10, width, pad, v < 0);
-			break;
-		}
-		case 'u':
-			putnum(&o, lng ? va_arg(ap, U64) : va_arg(ap, unsigned), 10, width, pad, false);
-			break;
-		case 'x':
-			putnum(&o, lng ? va_arg(ap, U64) : va_arg(ap, unsigned), 16, width, pad, false);
-			break;
-		case 'p':
-			putc_(&o, '0');
-			putc_(&o, 'x');
-			putnum(&o, (U64)(uintptr_t)va_arg(ap, void *), 16, 0, ' ', false);
-			break;
-		case '%':
-			putc_(&o, '%');
-			break;
-		default:
-			putc_(&o, *fmt);
-		}
-	}
-	va_end(ap);
-	flush(&o);
-	return o.total;
 }
 
 /* ---- file system (MFILES.H) ---- */

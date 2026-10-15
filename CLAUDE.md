@@ -161,7 +161,10 @@ make debug    # QEMU waits for gdb on :1234
   the M2/M5 tests, which run before `kbd_service_start()`.
 - Every task has its own exchange (`GetTSSExch`). `Sleep` = `Alarm` on it + `WaitMsg`, so don't use a task's
   own exchange for other traffic.
-- User programs (`port64/user/`): static ELF64 at 0x40000000, written against `user/lib/doors.h` (MMURTL names).
+- User programs (`port64/user/`): static ELF64 at 0x40000000, written against `user/lib/doors.h` (MMURTL names)
+  and the C library `user/lib/libc.c` (`<stdio.h>`, `<string.h>`, `<ctype.h>`, `<stdlib.h>` in `user/lib/libc/`).
+  `Compare`/`CompareNCS` return -1 on a match, as MMURTL's do (not the length).
+  `Chain`/`ExitJob` with an exit run file replace the program inside the same job (`replace()` in `kernel/job.c`).
   Add a program as `user/progs/NAME.c`; the Makefile builds it and adds it to the ISO as boot module NAME, which
   `LoadNewJob("NAME", ...)` and the monitor's `run NAME` find. `user/INITIAL.JOB` lists what starts at boot.
 - New system calls: add a `case SYS_Name` in `kernel/syscall.c` (check every user pointer with
