@@ -59,6 +59,26 @@ MAKEALL.BAT     # CM32 each *.C with /L, then DASM MMURTL.ATF /E (runs twice), c
   has a bad BPB. The tools rebuild both from `MMSYS/MMURTL.RUN` and `BOOTBLOK.EXE`. See `devlogs/2026-10-15.md`.
 - There are no tests. Verification means booting it and exercising the CLI.
 
+## DOORS 64-bit build (`port64/`)
+
+In WSL (Ubuntu 22.04: gcc, nasm, ld, grub-mkrescue, xorriso, qemu):
+
+```
+cd port64
+make          # build/kernel.elf + build/doors.iso (GRUB, Multiboot2)
+make run      # QEMU window; serial log on the terminal. Add QEMU_EXTRA="-monitor unix:/tmp/doors.mon,server,nowait"
+              #   to read the screen with tools/boot32/qscreen.py --sock /tmp/doors.mon
+make test     # headless; passes if the serial log shows the milestone marker (TEST_MARK) and the kernel
+              #   exits QEMU via isa-debug-exit (status 33). Kernel cmdline "test" enables the exit.
+make debug    # QEMU waits for gdb on :1234
+```
+
+- Layout: `boot/` (Multiboot2 + 32→64 switch), `kernel/`, `drivers/`, `arch/x86_64/`, `include/doors/`.
+- Memory model: kernel linked at `0xFFFFFFFF80000000` (`-mcmodel=kernel`). The boot code is at physical 1 MiB.
+  The first 1 GiB is mapped at both 0 and the higher half (`PHYS_TO_VIRT`).
+- Code is freestanding C11 with `-mgeneral-regs-only` (no SSE in the kernel yet) and `-Werror`.
+- Kernel messages go through `kprintf` to the VGA screen and COM1. Update `TEST_MARK` in the Makefile per milestone.
+
 ## Architecture facts that matter for the port
 
 - **Tasks are hardware TSSs.** Context switch = `JMP FWORD PTR [TSS]` (`KERNEL.ASM`).

@@ -12,7 +12,7 @@ toolchain (CM32, DASM) can't produce 64-bit code.
 
 | Decision | Choice | Why |
 |---|---|---|
-| Toolchain | `x86_64-elf-gcc` (freestanding C11) + NASM + GNU ld | CM32/DASM are 32-bit only. Extending them is a project of its own and can be done later (Phase 9). |
+| Toolchain | Host `gcc` (x86-64, freestanding C11, `-mcmodel=kernel -mno-red-zone`) + NASM + GNU ld | CM32/DASM are 32-bit only. Extending them is a project of its own and can be done later (Phase 9). |
 | Boot | Multiboot2 via GRUB (QEMU `-cdrom`); 32→64 trampoline in the kernel | Removes the DOS/`MMLOADER` dependency, and the same image works on real hardware. UEFI can come later. |
 | Context switch | Software: save callee-saved regs + RSP in a TCB, swap stacks | Long mode has no hardware task switch. |
 | TCB | New `struct task`, separate from the single CPU TSS | The 64-bit TSS only holds RSP0/IST. The OS fields from `TSS.INC` move to the TCB. |
@@ -36,7 +36,7 @@ port64/
   drivers/            # video.c keyboard.c floppy.c ide.c rs232.c parallel.c dma.c
   services/           # fsys/ (vfs.c, fat.c, ext4.c, jbd2.c), monitor.c, debugger.c
   block/              # block cache, MBR/GPT partitions
-  include/mmurtl/     # public API headers (from MKERNEL.H, MJOB.H, MFILES.H, ...)
+  include/doors/     # public API headers (from MKERNEL.H, MJOB.H, MFILES.H, ...)
   libc/               # ported CM32/LIB (stdio, string, stdlib, ctype)
   user/               # crt0, syscall stubs, ported sample apps (CLI, EDIT, ...)
   tools/              # mkfs / image builder, run-file loader replacement (ELF)
@@ -58,11 +58,15 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
       mtools, e2fsprogs, gdb.
 
 ### Phase 1 — Long-mode boot
-- [ ] Multiboot2 header and 32-bit entry, then build temporary page tables (identity + higher half).
-      Set CR4.PAE, EFER.LME, CR0.PG, and do a far jump to 64-bit code.
-- [ ] 64-bit GDT: null, kernel code/data, user data/code (ordered for SYSRET), TSS.
-- [ ] VGA text console (port `VIDEO.ASM`: `TTYOut`, `PutVidChars`, cursor).
-- **Done when:** QEMU shows the "DOORS" 64-bit banner.
+- [x] Multiboot2 header and 32-bit entry, then build temporary page tables (identity + higher half).
+      Set CR4.PAE, EFER.LME, CR0.PG, and do a far jump to 64-bit code. (`port64/boot/boot.asm`: first 1 GiB
+      mapped at 0 and at 0xFFFFFFFF80000000 with 2 MiB pages.)
+- [ ] 64-bit GDT: null, kernel code/data, user data/code (ordered for SYSRET), TSS. **Moved to Phase 2**,
+      which needs the TSS for IST stacks; M1 uses a minimal boot GDT (kernel code/data only).
+- [x] VGA text console (TTY output, scrolling, cursor) plus COM1 serial log and `kprintf`.
+- [x] Multiboot2 info: loader name, command line, memory map.
+- [x] `make run` / `make debug` / `make test` (headless, serial log + isa-debug-exit).
+- **Done when:** QEMU shows the "DOORS" 64-bit banner. ✅ 2026-10-16 (`make test`: `DOORS: M1 OK`).
 
 ### Phase 2 — Interrupts and time
 - [ ] 64-bit IDT. Port the exception handlers from `EXCEPT.ASM`, using IST stacks for #DF/#NMI.
@@ -102,7 +106,7 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
 ### Phase 6 — Ring 3, system calls, jobs (port `JOBC.C`, `JOBCODE.ASM`, `MPUBLICS.ASM`)
 - [ ] `SYSCALL`/`SYSRET` entry: MSR setup (STAR, LSTAR, FMASK), swap to the kernel stack, dispatch table.
       Validate user pointers (canonical, below the user limit).
-- [ ] Generate `include/mmurtl/syscalls.h` and user stubs from one table that mirrors `MPUBLICS.ASM` order.
+- [ ] Generate `include/doors/syscalls.h` and user stubs from one table that mirrors `MPUBLICS.ASM` order.
 - [ ] Executable format: ELF64 static, replacing the `.RUN` format (`RUNFILE.H`). The loader maps
       segments into a new job's PML4 and sets up the stack and job control block (`JOB.INC`).
 - [ ] Job management: `LoadNewJob`, `ExitJob`, `Chain`, `KillJob`, job control blocks, `INITIAL.JOB` processing.
@@ -197,7 +201,7 @@ Steps:
 | DEVDRVR / DMACODE | drivers/devdrvr.c, dma.c | rewrite |
 | FLOPPY.C / HARDIDE.C / RS232.C / PARALLEL.C | drivers/ | port (type fixes) |
 | FSYS.C | services/fsys/vfs.c, fat.c (+ new ext4.c, jbd2.c) | FAT ported; VFS and ext4 new; API kept |
-| MFILES.H | include/mmurtl/files.h | same names; sizes/offsets 64-bit; `ReadDir` added |
+| MFILES.H | include/doors/files.h | same names; sizes/offsets 64-bit; `ReadDir` added |
 | MONITOR.C | services/monitor.c | port |
 | DEBUGGER / UASM.C | services/debugger.c | rewrite last |
 | NUMCNVRT / MISCCODE | libc / kernel/util.c | rewrite in C |
