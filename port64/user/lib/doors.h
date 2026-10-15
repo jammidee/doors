@@ -6,6 +6,7 @@
 #define DOORS_USER_H
 
 #include <doors/types.h>
+#include <doors/dirent.h>
 #include <doors/erc.h>
 #include <doors/rqblk.h>
 
@@ -72,6 +73,8 @@ erc_t SetFileLFA(U32 dHandle, U64 dLFA);
 erc_t GetDirSector(const char *pPathSpec, U32 cbPathSpec, U8 *pSectorRet, U32 sSectorRet,
 		   U32 SectorNum);
 erc_t GetSystemDisk(U8 *pDiskRet);
+/* DOORS: entry dIndex of a directory on any file system; ErcNoMatch past the last one */
+erc_t ReadDir(const char *pPath, U32 cbPath, U32 dIndex, struct dir_entry *pEntryRet);
 
 /* video (MVID.H) */
 erc_t TTYOut(const char *pTextOut, U64 ddTextOut, U32 ddAttrib);

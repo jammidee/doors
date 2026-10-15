@@ -280,3 +280,5 @@ erc_t SetFileLFA(U32 h, U64 lfa)	{ return CALL(SetFileLFA, h, lfa); }
 erc_t GetDirSector(const char *p, U32 cb, U8 *s, U32 ss, U32 n)
 					{ return CALL(GetDirSector, A(p), cb, A(s), ss, n); }
 erc_t GetSystemDisk(U8 *p)		{ return CALL(GetSystemDisk, A(p)); }
+erc_t ReadDir(const char *p, U32 cb, U32 i, struct dir_entry *e)
+					{ return CALL(ReadDir, A(p), cb, i, A(e)); }

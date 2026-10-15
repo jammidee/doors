@@ -5,7 +5,7 @@ mkfs.fat and mtools, so the kernel's FAT code is checked against an independent 
 
   python3 tools/mkdisk.py OUT.img [--hello build/user/hello.elf]
 
-Layout (512-byte sectors):  2048.. FAT32 40 MB | FAT16 16 MB | FAT12 4 MB | free (scratch)
+Layout (512-byte sectors):  2048.. FAT32 40 MB | FAT16 16 MB | FAT12 4 MB | ext4 64 MB | free (scratch)
 Files:
   C:\\HELLO.TXT                 "Hello from a FAT32 file.\\n"
   C:\\A Long File Name.txt      long name (VFAT)
@@ -21,13 +21,18 @@ PARTS = [  # (start, sectors, mbr type, fat bits, label)
     (2048, 81920, 0x0C, 32, "DOORS32"),
     (83968, 32768, 0x06, 16, "DOORS16"),
     (116736, 8192, 0x01, 12, "DOORS12"),
+    (124928, 131072, 0x83, "ext4", "DOORS-EXT4"),	# F: ext4 (mkfs.ext4 -T default)
 ]
-TOTAL = 196608  # 96 MB
+TOTAL = 262144  # 128 MB
 
 HELLO_TXT = b"Hello from a FAT32 file.\n"
 LONG_TXT = b"This file has a long name.\n"
 DEEP_TXT = b"Three levels down.\n"
 README_TXT = b"FAT16 volume D:\n"
+EXT_HELLO = b"Hello from ext4.\n"
+EXT_LONG = b"A long name on ext4.\n"
+EXT_DEEP = b"Deep in an ext4 tree.\n"
+EXT_CASE = b"case matters\n"
 TINY_TXT = b"FAT12 volume E:\n"
 
 
@@ -65,9 +70,11 @@ def main():
             p = os.path.join(tmp, f"p{i}.img")
             with open(p, "wb") as f:
                 f.truncate(n * SEC)
-            run("mkfs.fat", "-F", str(bits), "-n", label, "-h", str(start), "-S", "512", p)
             imgs.append(p)
-        c, d, e = imgs
+            if bits == "ext4":
+                continue                # made below, from a directory tree
+            run("mkfs.fat", "-F", str(bits), "-n", label, "-h", str(start), "-S", "512", p)
+        c, d, e, f4 = imgs
         put(c, HELLO_TXT, "HELLO.TXT", tmp)
         put(c, LONG_TXT, "A Long File Name.txt", tmp)
         run("mmd", "-i", c, "::DIR1", "::DIR1/SUB", "::BIN", env=env())
@@ -77,6 +84,25 @@ def main():
             put(c, open(hello, "rb").read(), "BIN/HELLO.ELF", tmp)
         put(d, README_TXT, "README.TXT", tmp)
         put(e, TINY_TXT, "TINY.TXT", tmp)
+
+        # F: ext4 with Linux's default features, filled from a directory tree
+        tree = os.path.join(tmp, "ext4root")
+        for sub in ("deep/dir/tree", "BIN"):
+            os.makedirs(os.path.join(tree, sub))
+        files = {"HELLO.TXT": EXT_HELLO, "A long file name on ext4.txt": EXT_LONG,
+                 "deep/dir/tree/FILE.TXT": EXT_DEEP, "MixedCase.Txt": EXT_CASE,
+                 "BIG.BIN": big_bin(300000)}
+        if hello:
+            files["BIN/HELLO.ELF"] = open(hello, "rb").read()
+        for name, data in files.items():
+            with open(os.path.join(tree, name), "wb") as out_f:
+                out_f.write(data)
+        with open(os.path.join(tree, "SPARSE.BIN"), "wb") as sp:   # 4 KB data, 1 MB hole, 4 KB data
+            sp.write(b"A" * 4096)
+            sp.seek(4096 + (1 << 20))
+            sp.write(b"B" * 4096)
+        run("mkfs.ext4", "-q", "-F", "-T", "default", "-b", "4096", "-I", "256", "-L", PARTS[3][4],
+            "-d", tree, f4, str(PARTS[3][1] // 8))
 
         mbr = bytearray(SEC)
         for i, (start, n, typ, bits, label) in enumerate(PARTS):

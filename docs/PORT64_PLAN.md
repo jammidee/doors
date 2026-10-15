@@ -177,30 +177,41 @@ The file system service keeps the original MMURTL API from `MFILES.H` with the s
   Raise the internal path limit (for example to 4096).
 - File sizes and positions widen to 64-bit: `dSize`, `pdSizeRet`, `dLFA`, `pdLFARet`, `nBytes`
   become `int64_t`/`uint64_t`. This is the only signature change.
-- `GetDirSector` is FAT-specific. Keep it for compatibility on FAT volumes. On ext4 it returns entries in a
-  generic record format. Add `ReadDir(handle, pEntriesRet, cbMax, pcbRet)` as a new call at the end of the
-  syscall table (new calls go after the original ones, so numbering is unchanged).
+- `GetDirSector` is FAT-specific. Keep it for compatibility on FAT volumes; on ext4 it returns
+  `ErcNotSupported`. **Done (M8):** `ReadDir(pPath, cbPath, dIndex, pEntryRet)` is system call 110, the
+  first DOORS extension after MMURTL's 0–109 (`tools/gen_syscalls.sh` appends it, so numbering is unchanged).
+  It returns one `struct dir_entry` (`include/doors/dirent.h`: name, 64-bit size, attributes, Unix mtime)
+  and `ErcNoMatch` past the end, on every file system.
 - `DeleteDir`, which the original never finished (`PROBLEMS.TXT` 2a), gets implemented. ✅ (M7)
 
 Steps:
-- [~] VFS layer. M7 has the service and handle table (`kernel/fsys.c`: FILESYS service at priority 5 as in
-      MMURTL, per-job handles, MMURTL sharing rules, files closed at job end) on top of FAT directly.
-      **M8:** a volume-ops table, so ext4 plugs in next to FAT.
+- [x] VFS layer. `kernel/fsys.c`: FILESYS service at priority 5 as in MMURTL, per-job handles, MMURTL
+      sharing rules, files closed at job end. Each volume has a `struct fs_ops` table (`include/doors/fs.h`:
+      lookup/create/remove/rename/read/write/truncate/readdir), and FAT and ext4 plug in side by side.
+      Read-only volumes refuse writes with `ErcReadOnly`.
 - [x] FAT driver (`kernel/fat.c`): FAT12/16/32 by cluster count, VFAT long names (read and create, with
       `NAME~N` aliases), case-insensitive paths with `.`/`..`, create/delete/rename/move (fixing `..`),
       mkdir/rmdir, byte-exact stream and block I/O, truncate/extend, RTC timestamps, all FAT copies
       updated, FAT32 FSInfo marked unknown. Checked by `fsck.fat` after every `make test`.
 - [x] All `MFILES.H` calls (sizes/LFA 64-bit) from the kernel and from ring 3; `LoadNewJob` loads ELF files
       by path; `GetSystemDisk`.
-- [ ] ext4 read-only: superblock, block group descriptors (64-bit), inodes, extent trees, linear and
-      htree directories, checksums (metadata_csum) verified on read.
-- [ ] ext4 read/write: block and inode allocation, extent insert/split, directory insert/delete, rename,
-      truncate. No journal yet; mount refuses if `needs_recovery` is set.
-- [ ] Journaling (jbd2): replay on mount, then ordered-mode metadata journaling for writes.
-- [ ] Image tool (`tools/`): build an ext4 system disk holding `MMSYS` contents (WSL `mkfs.ext4 -d`),
-      plus a FAT image for interchange.
-- [ ] Test suite: run fsstress-style random create/write/rename/delete from a test job, then `e2fsck -fn`
-      the image on the host. It must come back clean.
+- [x] ext4 read (M8, `kernel/ext4.c`): Linux's default `mkfs.ext4` features (64bit, extents, flex_bg,
+      metadata_csum, dir_index, huge_file, ...). Superblock, 64-bit group descriptors, inodes and extent
+      trees of any depth, holes and unwritten extents. htree directories are read linearly (their leaves are
+      ordinary blocks). Checksums are verified on read (CRC32C, `kernel/crc32c.c`). Names are case-sensitive.
+- [x] ext4 read/write (M8): block and inode allocation (bitmaps, group descriptors, flex_bg counters and
+      every checksum kept up to date), extent insert with a depth 0→1 tree and leaf splits, truncate, sparse
+      extend, directory insert/delete with the checksum tail, rename/move (fixes `..` and link counts),
+      mkdir/rmdir. Limits: extent tree depth ≤ 1 on write, no writes into htree (`dir_index`-flagged)
+      directories, no journal. A volume that needs journal recovery mounts read-only.
+- [ ] Journaling (jbd2): replay on mount, then ordered-mode metadata journaling for writes. → M8b
+- [ ] htree directory writes and deeper extent trees on write. → M8b
+- [~] Image tool: `tools/mkdisk.py` adds an ext4 partition (F:) built with `mkfs.ext4 -d`. An ext4 *system*
+      disk holding the `MMSYS` contents, booted from, comes in M8b/M9.
+- [x] Test suite: M8 self-tests (read, write, a 5 GB sparse file, long and case-different names, rename,
+      move, truncate, delete) plus a random stress test of 400 operations against a model of the expected
+      file contents, with a new seed every run. Afterwards `tools/check_disk.py` runs `e2fsck -fn` and checks
+      the contents with `debugfs`. Clean on repeated runs.
 - Unsupported features (inline data, encryption, compression and similar) refuse a rw mount and allow ro
       where safe. Mount checks incompat flags.
 - **Done when:** DOORS boots from an ext4 root, the CLI copies/renames/deletes files with long names,

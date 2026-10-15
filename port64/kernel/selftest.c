@@ -993,7 +993,7 @@ static void test_disk(void)
 	U64 scratch;
 
 	CHECK(d, "no disk 12 (is the test disk attached?)");
-	CHECK(d->nblocks == 196608, "disk 12 has %lu blocks, expected 196608", d->nblocks);
+	CHECK(d->nblocks == 262144, "disk 12 has %lu blocks, expected 262144", d->nblocks);
 	CHECK(DeviceStat(DEV_HD0, (U8 *)&ds, sizeof(ds), &n) == ErcOk && ds.nblocks == d->nblocks,
 	      "DeviceStat");
 	CHECK(DeviceOp(DEV_HD0, CmdRead, 0, 1, fbuf) == ErcOk && fbuf[510] == 0x55 && fbuf[511] == 0xAA,
@@ -1174,6 +1174,313 @@ static void test_fs_jobs(void)
 	kprintf("DOORS: M7 OK\n");
 }
 
+/* ======================================================================== M8 */
+
+/* F: is ext4 made by mkfs.ext4 -T default (tools/mkdisk.py); tools/check_disk.py runs
+   e2fsck -fn on it afterwards. */
+
+static void test_ext4_read(void)
+{
+	struct volume *f = vol_get('F');
+	struct dir_entry de;
+	U32 h, i;
+	U64 n, off = 0;
+	bool seen_long = false, seen_big = false;
+
+	CHECK(crc32c_selftest(), "CRC32C self-test (\"123456789\" -> E3069283)");
+	CHECK(f && f->kind == VOL_EXT4 && !f->ro, "F: is not a writable ext4 volume");
+	CHECK(read_all(S("F:\\HELLO.TXT"), fbuf, sizeof(fbuf)) == 17 && !memcmp(fbuf, "Hello from ext4.\n", 17),
+	      "F:\\HELLO.TXT");
+	CHECK(read_all(S("F:\\A long file name on ext4.txt"), fbuf, sizeof(fbuf)) == 21, "ext4 long name");
+	CHECK(read_all(S("F:/deep/dir/tree/FILE.TXT"), fbuf, sizeof(fbuf)) == 22 &&
+	      !memcmp(fbuf, "Deep in an ext4 tree.\n", 22), "ext4 nested directories");
+	CHECK(read_all(S("F:\\MixedCase.Txt"), fbuf, sizeof(fbuf)) == 13, "exact-case name");
+	CHECK(OpenFile(S("F:\\mixedcase.txt"), ModeRead, 1, &h) == ErcNoSuchFile,
+	      "ext4 names must be case-sensitive");
+	CHECK(OpenFile(S("F:\\BIG.BIN"), ModeRead, 1, &h) == ErcOk, "open BIG.BIN");
+	for (;;) {
+		erc_t erc = ReadBytes(h, fbuf, sizeof(fbuf), &n);
+
+		for (i = 0; i < n; i++)
+			CHECK(fbuf[i] == (U8)((off + i) * 7 + (off + i) / 251), "BIG.BIN byte %lu", off + i);
+		off += n;
+		if (erc)
+			break;
+	}
+	CloseFile(h);
+	CHECK(off == 300000, "BIG.BIN: %lu bytes", off);
+	CHECK(OpenFile(S("F:\\SPARSE.BIN"), ModeRead, 1, &h) == ErcOk &&
+	      ReadBytes(h, fbuf, 4096, &n) == ErcOk && fbuf[0] == 'A' && fbuf[4095] == 'A' &&
+	      SetFileLFA(h, 4096 + 500000) == ErcOk && ReadBytes(h, fbuf, 16, &n) == ErcOk &&
+	      fbuf[0] == 0 && fbuf[15] == 0 && SetFileLFA(h, 4096 + (1UL << 20)) == ErcOk &&
+	      ReadBytes(h, fbuf, 4096, &n) == ErcOk && fbuf[0] == 'B', "SPARSE.BIN (hole reads as zeros)");
+	CloseFile(h);
+	for (i = 0; ReadDir(S("F:\\"), i, &de) == ErcOk; i++) {
+		seen_long |= !strcmp(de.name, "A long file name on ext4.txt") && de.size == 21;
+		seen_big |= !strcmp(de.name, "BIG.BIN") && de.size == 300000 && de.mtime > 1700000000;
+	}
+	CHECK(seen_long && seen_big, "ReadDir F:\\ (%u entries)", i);
+	CHECK(ReadDir(S("F:\\"), 999, &de) == ErcNoMatch, "ReadDir past the end");
+	CHECK(ReadDir(S("C:\\"), 0, &de) == ErcOk, "ReadDir on FAT too");
+	CHECK(GetDirSector(S("F:\\"), fbuf, 512, 0) == ErcNotSupported, "GetDirSector is FAT-only");
+	kprintf("M8: ext4 read ok (metadata_csum, 64bit, extents, holes, case-sensitive names, ReadDir)\n");
+}
+
+static void test_ext4_write(void)
+{
+	U32 h, i;
+	U64 n, size, k;
+	const U64 G = 1UL << 30;
+
+	/* plain file over many blocks */
+	CHECK(write_pat(S("F:\\NEW4.BIN"), 100000, 13) == ErcOk && check_pat(S("F:\\NEW4.BIN"), 100000, 13),
+	      "ext4: 100000-byte file");
+	/* fragmented file: 12 separate extents, more than the inode's 4 -> extent tree depth 1 */
+	CHECK(CreateFile(S("F:\\FRAG.BIN"), 0) == ErcOk && OpenFile(S("F:\\FRAG.BIN"), ModeModify, 0, &h) == ErcOk,
+	      "FRAG.BIN");
+	for (i = 0; i < 12; i++) {
+		memset(fbuf, 'a' + (int)i, 4096);
+		CHECK(WriteBlock(h, fbuf, 4096, (U64)i * 2 * 4096, &n) == ErcOk, "FRAG.BIN block %u", i);
+	}
+	CloseFile(h);
+	CHECK(OpenFile(S("F:\\FRAG.BIN"), ModeRead, 0, &h) == ErcOk, "reopen FRAG.BIN");
+	for (i = 0; i < 12; i++) {
+		CHECK(ReadBlock(h, fbuf, 4096, (U64)i * 2 * 4096, &n) == ErcOk && fbuf[0] == 'a' + (int)i &&
+		      fbuf[4095] == 'a' + (int)i, "FRAG.BIN data %u", i);
+		if (i < 11)
+			CHECK(ReadBlock(h, fbuf, 4096, ((U64)i * 2 + 1) * 4096, &n) == ErcOk && !fbuf[0] &&
+			      !fbuf[4095], "FRAG.BIN hole %u", i);
+	}
+	CloseFile(h);
+
+	/* a 5 GB sparse file with data at 4.5 GB: 64-bit sizes and offsets */
+	CHECK(CreateFile(S("F:\\HUGE.BIN"), 0) == ErcOk && OpenFile(S("F:\\HUGE.BIN"), ModeModify, 1, &h) == ErcOk,
+	      "HUGE.BIN");
+	CHECK(SetFileSize(h, 5 * G) == ErcOk && SetFileLFA(h, 4 * G + G / 2) == ErcOk, "5 GB size, LFA 4.5 GB");
+	for (k = 0; k < 4096; k++)
+		fbuf[k] = patb(k, 17);
+	CHECK(WriteBytes(h, fbuf, 4096, &n) == ErcOk && n == 4096, "write at 4.5 GB");
+	CHECK(GetFileSize(h, &size) == ErcOk && size == 5 * G, "size %lu", size);
+	CloseFile(h);
+	CHECK(OpenFile(S("F:\\HUGE.BIN"), ModeRead, 1, &h) == ErcOk && SetFileLFA(h, 4 * G + G / 2) == ErcOk &&
+	      ReadBytes(h, fbuf2, 4096, &n) == ErcOk && !memcmp(fbuf, fbuf2, 4096) &&
+	      SetFileLFA(h, G) == ErcOk && ReadBytes(h, fbuf2, 64, &n) == ErcOk && !fbuf2[0] && !fbuf2[63],
+	      "read back at 4.5 GB, hole at 1 GB");
+	CloseFile(h);
+
+	/* names, directories, rename/move, truncate, delete */
+	CHECK(write_pat(S("F:\\Long name created by DOORS on ext4.txt"), 0, 1) == ErcOk &&
+	      OpenFile(S("F:\\Long name created by DOORS on ext4.txt"), ModeModify, 1, &h) == ErcOk &&
+	      WriteBytes(h, (const U8 *)"long ext4\n", 10, &n) == ErcOk, "ext4 long name create");
+	CloseFile(h);
+	CHECK(CreateFile(S("F:\\Case.txt"), 0) == ErcOk && CreateFile(S("F:\\case.txt"), 0) == ErcOk,
+	      "names differing only in case are different files");
+	CHECK(CreateDir(S("F:\\NEWDIR4")) == ErcOk && write_pat(S("F:\\NEWDIR4\\X.TXT"), 5000, 7) == ErcOk,
+	      "ext4 mkdir + file");
+	CHECK(RenameFile(S("F:\\NEWDIR4\\X.TXT"), S("F:\\NEWDIR4\\Y.TXT")) == ErcOk &&
+	      check_pat(S("F:\\NEWDIR4\\Y.TXT"), 5000, 7), "ext4 rename");
+	CHECK(DeleteDir(S("F:\\NEWDIR4")) == ErcDirNotEmpty, "ext4 DeleteDir non-empty");
+	CHECK(OpenFile(S("F:\\NEWDIR4\\Y.TXT"), ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk,
+	      "ext4 DeleteFile");
+	CHECK(DeleteDir(S("F:\\NEWDIR4")) == ErcOk, "ext4 DeleteDir");
+	CHECK(CreateDir(S("F:\\MOVE4")) == ErcOk && write_pat(S("F:\\MOVE4\\IN.TXT"), 3, 1) == ErcOk &&
+	      RenameFile(S("F:\\MOVE4"), S("F:\\deep\\MOVED4")) == ErcOk &&
+	      read_all(S("F:\\deep\\MOVED4\\..\\..\\HELLO.TXT"), fbuf, sizeof(fbuf)) == 17,
+	      "ext4 move a directory ('..' updated)");
+	CHECK(write_pat(S("F:\\TRUNC4.BIN"), 20000, 3) == ErcOk &&
+	      OpenFile(S("F:\\TRUNC4.BIN"), ModeModify, 1, &h) == ErcOk && SetFileSize(h, 5000) == ErcOk &&
+	      SetFileSize(h, 9000) == ErcOk, "ext4 truncate + sparse extend");
+	CloseFile(h);
+	{
+		static U8 tbuf[9000];
+
+		CHECK(OpenFile(S("F:\\TRUNC4.BIN"), ModeRead, 1, &h) == ErcOk &&
+		      ReadBytes(h, tbuf, sizeof(tbuf), &n) == ErcOk && n == 9000, "read TRUNC4");
+		CloseFile(h);
+		for (k = 0; k < 9000; k++)
+			CHECK(tbuf[k] == (k < 5000 ? patb(k, 3) : 0), "TRUNC4.BIN byte %lu", k);
+	}
+	CHECK(write_pat(S("F:\\GONE.BIN"), 50000, 9) == ErcOk && OpenFile(S("F:\\GONE.BIN"), ModeModify, 1, &h) == ErcOk &&
+	      DeleteFile(h) == ErcOk, "ext4 delete a multi-block file");
+	CHECK(fsys_open_count() == 0, "%u files left open", fsys_open_count());
+	kprintf("M8: ext4 write ok (files, extent tree depth 1, 5 GB sparse file, long names, "
+		"mkdir/rename/move/rmdir, truncate, delete)\n");
+}
+
+/* Random file operations on F: checked against a model of what every file must hold; the host's
+   e2fsck -fn then checks the volume (tools/check_disk.py). The seed changes every run and is printed,
+   so repeated `make test` runs cover different sequences. File k holds bytes [0, valid) of pattern
+   mul, then zeros up to size. Slots 0-9 live in F:\STRESS, 10-15 in F:\STRESS\Sub dir. */
+#define NSLOT 16
+static struct { bool used; U64 size, valid; U32 mul; } slot[NSLOT];
+static char spath[NSLOT][40];
+static U64 rng;
+
+static U64 rnd(void)
+{
+	rng ^= rng << 13;
+	rng ^= rng >> 7;
+	rng ^= rng << 17;
+	return rng;
+}
+
+static U32 slen(U32 k) { return (U32)strlen(spath[k]); }
+
+static void stress_verify(U32 k)
+{
+	U32 h;
+	U64 off, n, i, size;
+
+	CHECK(OpenFile(spath[k], slen(k), ModeRead, 1, &h) == ErcOk, "stress: open %s", spath[k]);
+	CHECK(GetFileSize(h, &size) == ErcOk && size == slot[k].size, "stress: %s size %lu, want %lu",
+	      spath[k], size, slot[k].size);
+	for (off = 0; off < size; off += n) {
+		erc_t e = ReadBytes(h, fbuf, sizeof(fbuf), &n);
+
+		CHECK((e == ErcOk || e == ErcEOF) && n, "stress: read %s at %lu: erc %u", spath[k], off, e);
+		for (i = 0; i < n; i++)
+			CHECK(fbuf[i] == (off + i < slot[k].valid ? patb(off + i, slot[k].mul) : 0),
+			      "stress: %s byte %lu (size %lu, valid %lu, seed %lx)", spath[k], off + i,
+			      slot[k].size, slot[k].valid, rng);
+	}
+	CloseFile(h);
+}
+
+static void test_ext4_stress(void)
+{
+	static const char *const what[] = { "write", "write", "truncate/extend", "rename", "delete",
+					    "overwrite", "verify", "mkdir/rmdir" };
+	U32 ops[8] = { 0 }, i, k, b, h, nops = 400;
+	U64 seed, n;
+	bool tmpdir = false;
+
+	GetTimerTick(&n);
+	rng = seed = (U64)unix_time() * 2654435761UL + n + 1;
+	for (k = 0; k < NSLOT; k++) {
+		const char *t = k < 10 ? "F:\\STRESS\\Stress file " : "F:\\STRESS\\Sub dir\\file-";
+		char *p = spath[k];
+
+		while (*t)
+			*p++ = *t++;
+		*p++ = (char)('0' + k / 10);
+		*p++ = (char)('0' + k % 10);
+		if (k < 10) {
+			memcpy(p, ".dat", 5);
+		} else {
+			*p = 0;
+		}
+	}
+	CHECK(CreateDir(S("F:\\STRESS")) == ErcOk && CreateDir(S("F:\\STRESS\\Sub dir")) == ErcOk,
+	      "stress: directories");
+	for (i = 0; i < nops; i++) {
+		U32 op = (U32)(rnd() % 8);
+
+		k = (U32)(rnd() % NSLOT);
+		switch (op) {
+		case 0: case 1: {		/* (re)write the whole file */
+			U64 size = rnd() % 8 ? rnd() % 65536 : rnd() % 300000;
+			U32 mul = (U32)(rnd() % 255) | 1;
+
+			CHECK(write_pat(spath[k], slen(k), size, mul) == ErcOk, "stress: write %s", spath[k]);
+			if (slot[k].used && slot[k].size > size)
+				CHECK(OpenFile(spath[k], slen(k), ModeModify, 1, &h) == ErcOk &&
+				      SetFileSize(h, size) == ErcOk && CloseFile(h) == ErcOk, "stress: cut %s", spath[k]);
+			slot[k].used = true;
+			slot[k].size = slot[k].valid = size;
+			slot[k].mul = mul;
+			break;
+		}
+		case 2:				/* truncate or sparse extend */
+			if (!slot[k].used)
+				continue;
+			n = rnd() % (slot[k].size * 2 + 8192);
+			CHECK(OpenFile(spath[k], slen(k), ModeModify, 1, &h) == ErcOk && SetFileSize(h, n) == ErcOk &&
+			      CloseFile(h) == ErcOk, "stress: SetFileSize(%s, %lu)", spath[k], n);
+			slot[k].size = n;
+			if (slot[k].valid > n)
+				slot[k].valid = n;
+			break;
+		case 3:				/* rename to a free slot, maybe into the other directory */
+			b = (U32)(rnd() % NSLOT);
+			if (!slot[k].used || slot[b].used)
+				continue;
+			CHECK(RenameFile(spath[k], slen(k), spath[b], slen(b)) == ErcOk, "stress: rename %s -> %s",
+			      spath[k], spath[b]);
+			slot[b] = slot[k];
+			slot[k].used = false;
+			break;
+		case 4:				/* delete */
+			if (!slot[k].used)
+				continue;
+			CHECK(OpenFile(spath[k], slen(k), ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk,
+			      "stress: delete %s", spath[k]);
+			slot[k].used = false;
+			break;
+		case 5: {			/* overwrite/append a chunk that starts inside the valid part */
+			U64 off, len = rnd() % 10000 + 1, j, done;
+
+			if (!slot[k].used)
+				continue;
+			off = rnd() % (slot[k].valid + 1);
+			CHECK(OpenFile(spath[k], slen(k), ModeModify, 1, &h) == ErcOk && SetFileLFA(h, off) == ErcOk,
+			      "stress: open %s for overwrite", spath[k]);
+			for (j = 0; j < len; j += n) {
+				n = len - j < sizeof(fbuf) ? len - j : sizeof(fbuf);
+				for (b = 0; b < n; b++)
+					fbuf[b] = patb(off + j + b, slot[k].mul);
+				CHECK(WriteBytes(h, fbuf, n, &done) == ErcOk && done == n, "stress: overwrite %s",
+				      spath[k]);
+			}
+			CloseFile(h);
+			if (off + len > slot[k].valid)
+				slot[k].valid = off + len;
+			if (slot[k].valid > slot[k].size)
+				slot[k].size = slot[k].valid;
+			break;
+		}
+		case 6:
+			if (!slot[k].used)
+				continue;
+			stress_verify(k);
+			break;
+		case 7:
+			if (tmpdir)
+				CHECK(DeleteDir(S("F:\\STRESS\\Sub dir\\Temp dir")) == ErcOk, "stress: rmdir");
+			else
+				CHECK(CreateDir(S("F:\\STRESS\\Sub dir\\Temp dir")) == ErcOk, "stress: mkdir");
+			tmpdir = !tmpdir;
+			break;
+		}
+		ops[op]++;
+	}
+	for (k = 0; k < NSLOT; k++) {
+		U32 h2;
+
+		if (slot[k].used)
+			stress_verify(k);
+		else
+			CHECK(OpenFile(spath[k], slen(k), ModeRead, 1, &h2) == ErcNoSuchFile, "stress: %s should be gone",
+			      spath[k]);
+	}
+	CHECK(fsys_open_count() == 0, "stress: %u files left open", fsys_open_count());
+	kprintf("M8: ext4 stress ok (seed %lx: ", seed);
+	for (i = 0; i < 8; i++)
+		if (i != 1)
+			kprintf("%u %s%s", i ? ops[i] : ops[0] + ops[1], what[i], i < 7 ? ", " : ")\n");
+}
+
+static void test_ext4_jobs(void)
+{
+	const struct job *j;
+	U32 job;
+
+	CHECK(LoadNewJob(S("F:\\BIN\\HELLO.ELF"), &job) == ErcOk, "LoadNewJob(F:\\BIN\\HELLO.ELF)");
+	j = wait_job(job, 500);
+	CHECK(j && !j->alive && j->exit_erc == 0, "hello from ext4 exited with %u", j ? j->exit_erc : 0);
+	kprintf("M8: LoadNewJob from ext4 ok\n");
+	kprintf("DOORS: M8 OK\n");
+}
+
 /* Last test: overflow the kernel stack into its guard page. The #PF can't push its frame on
    the dead stack, so the CPU raises #DF, which runs on its own IST stack. */
 
@@ -1239,6 +1546,11 @@ void selftest_run(void)
 	test_fat_read();
 	test_fat_write();
 	test_fs_jobs();
+
+	test_ext4_read();
+	test_ext4_write();
+	test_ext4_stress();
+	test_ext4_jobs();
 
 	isr_register(8, df_handler);
 	recurse(0);

@@ -60,68 +60,29 @@ static void read_boot_info(U64 mbi_phys)
 
 /* ---- interactive mode: a tiny line monitor to try the M2 features by hand ---- */
 
-/* "dir": read a directory with MMURTL's GetDirSector and print its entries, long names
-   included (assembled from the VFAT entries before each 8.3 entry). */
+/* "dir": list a directory with ReadDir, so it works on FAT and ext4 alike. */
 static void list_dir(const char *path)
 {
-	static U8 sec[512];
-	static const U8 pos[13] = { 1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30 };
-	char lfn[256];
-	U32 s, i, k, files = 0;
-	bool have_lfn = false;
+	static struct dir_entry de;
+	U32 i;
 	erc_t e;
 
-	for (s = 0; (e = GetDirSector(path, (U32)strlen(path), sec, sizeof(sec), s)) == ErcOk; s++) {
-		for (i = 0; i < 512; i += 32) {
-			U8 *d = sec + i;
-			char sn[13];
-			U32 n = 0;
+	for (i = 0; (e = ReadDir(path, (U32)strlen(path), i, &de)) == ErcOk; i++) {
+		U64 t = de.mtime, days = t / 86400;
+		/* civil_from_days (Howard Hinnant), the inverse of days_from_civil in drivers/rtc.c */
+		U64 z = days + 719468, era = z / 146097, doe = z - era * 146097;
+		U64 yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+		U64 doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+		U64 d = doy - (153 * mp + 2) / 5 + 1, m = mp < 10 ? mp + 3 : mp - 9;
+		U64 y = yoe + era * 400 + (m <= 2);
 
-			if (!d[0])
-				goto done;
-			if (d[0] == 0xE5) {
-				have_lfn = false;
-				continue;
-			}
-			if ((d[11] & 0x3F) == ATTR_LFN) {
-				U32 ord = d[0] & 0x3F;
-
-				if (d[0] & 0x40) {
-					memset(lfn, 0, sizeof(lfn));
-					have_lfn = true;
-				}
-				for (k = 0; k < 13 && ord && (ord - 1) * 13 + k < sizeof(lfn) - 1; k++) {
-					U16 u = (U16)(d[pos[k]] | (d[pos[k] + 1] << 8));
-
-					if (u && u != 0xFFFF)
-						lfn[(ord - 1) * 13 + k] = u < 128 ? (char)u : '?';
-				}
-				continue;
-			}
-			if (d[11] & ATTR_VOLUME) {
-				have_lfn = false;
-				continue;
-			}
-			for (k = 0; k < 8 && d[k] != ' '; k++)
-				sn[n++] = (char)d[k];
-			if (d[8] != ' ')
-				sn[n++] = '.';
-			for (k = 8; k < 11 && d[k] != ' '; k++)
-				sn[n++] = (char)d[k];
-			sn[n] = 0;
-			kprintf("%-12s %10u  %04u-%02u-%02u  %s  %s\n", sn,
-				(U32)(d[28] | (d[29] << 8) | (d[30] << 16) | ((U32)d[31] << 24)),
-				1980 + (d[25] >> 1), ((d[25] & 1) << 3) | (d[24] >> 5), d[24] & 31,
-				(d[11] & ATTR_DIR) ? "<DIR>" : "     ", have_lfn ? lfn : "");
-			have_lfn = false;
-			files++;
-		}
+		kprintf("%04lu-%02lu-%02lu %02lu:%02lu  %s %12lu  %s\n", y, m, d, t % 86400 / 3600,
+			t % 3600 / 60, (de.attr & ATTR_DIR) ? "<DIR>" : "     ", de.size, de.name);
 	}
-done:
-	if (e && e != ErcNoMatch)
-		kprintf("GetDirSector: error %u\n", e);
+	if (e != ErcNoMatch)
+		kprintf("ReadDir: error %u\n", e);
 	else
-		kprintf("%u entries\n", files);
+		kprintf("%u entries\n", i);
 }
 
 /* Busy task for "spin": burns CPU (never yields) for the given number of ticks, then exits. */
@@ -208,7 +169,8 @@ static void cmd(const char *line)
 			kprintf("%c:  disk %u part %u  %5lu MB  %s  %s\n", v->letter, v->dev->devnum,
 				v->part, v->nsectors >> 11,
 				v->kind == VOL_FAT32 ? "FAT32" : v->kind == VOL_FAT16 ? "FAT16" :
-				v->kind == VOL_FAT12 ? "FAT12" : v->kind == VOL_LINUX ? "Linux" : "?",
+				v->kind == VOL_FAT12 ? "FAT12" : v->kind == VOL_EXT4 ? "ext4 " :
+				v->kind == VOL_LINUX ? "Linux" : "?",
 				v->label);
 	} else if (!strncmp(line, "dir ", 4)) {
 		list_dir(line + 4);

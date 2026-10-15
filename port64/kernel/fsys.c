@@ -24,20 +24,20 @@
 
 enum { FS_OPEN = 1, FS_CLOSE, FS_CREATE, FS_DELETE, FS_RENAME, FS_MKDIR, FS_RMDIR, FS_READB,
        FS_WRITEB, FS_READBLK, FS_WRITEBLK, FS_GETSIZE, FS_SETSIZE, FS_GETLFA, FS_SETLFA,
-       FS_DIRSEC };
+       FS_DIRSEC, FS_READDIR };
 
 struct fs_req {
 	U32 handle, mode, stream, attr, sectnum;
 	U64 n, lfa, out;
 	U32 out32;
 	U32 name2_len;
-	char name2[MAX_PATH];		/* RenameFile's new name / GetDirSector's path */
+	char name2[MAX_PATH];		/* RenameFile's new name / GetDirSector's and ReadDir's path */
 };
 
 struct ofile {
 	bool used;
 	U32 job;
-	struct fat_node n;
+	struct fnode n;
 	U64 lfa;
 	U8 mode, stream;
 };
@@ -45,9 +45,9 @@ struct ofile {
 static struct ofile files[nFILES];
 static U32 fs_exch;
 
-static bool same(const struct fat_node *a, const struct fat_node *b)
+static bool same(const struct fnode *a, const struct fnode *b)
 {
-	return a->vol == b->vol && a->dir_clus == b->dir_clus && a->idx == b->idx;
+	return a->vol == b->vol && a->key == b->key;
 }
 
 static struct ofile *handle(U32 h, U32 job)
@@ -55,7 +55,7 @@ static struct ofile *handle(U32 h, U32 job)
 	return h < nFILES && files[h].used && files[h].job == job ? &files[h] : NULL;
 }
 
-static bool is_open(const struct fat_node *n, int want_modify, bool *modifier)
+static bool is_open(const struct fnode *n, bool *modifier)
 {
 	U32 i;
 	bool any = false;
@@ -67,26 +67,36 @@ static bool is_open(const struct fat_node *n, int want_modify, bool *modifier)
 			if (files[i].mode == ModeModify)
 				*modifier = true;
 		}
-	(void)want_modify;
 	return any;
 }
 
-static erc_t do_open(struct RqBlk *r, struct fs_req *q)
+/* The volume a path names, mounted. */
+static erc_t path_vol(const char *path, U64 len, struct volume **v)
 {
-	struct fat_node n;
+	if (len < 2 || path[1] != ':')
+		return ErcBadFileSpec;
+	*v = vol_get(path[0]);
+	if (!*v)
+		return ErcNoSuchDrive;
+	return (*v)->ops ? ErcOk : ErcNotSupported;
+}
+
+static erc_t do_open(struct RqBlk *r, struct fs_req *q, struct volume *v)
+{
+	struct fnode n;
 	bool modifier;
 	erc_t erc;
 	U32 i;
 
 	if (q->mode > ModeModify)
 		return ErcBadOpenMode;
-	if ((erc = fat_lookup((const char *)r->pData1, (U32)r->cbData1, &n)))
+	if ((erc = v->ops->lookup((const char *)r->pData1, (U32)r->cbData1, &n)))
 		return erc;
 	if (n.attr & ATTR_DIR)
 		return ErcNotAFile;
-	if (q->mode == ModeModify && (n.attr & ATTR_RO))
+	if (q->mode == ModeModify && ((n.attr & ATTR_RO) || v->ro))
 		return ErcReadOnly;
-	if (is_open(&n, q->mode, &modifier) && (q->mode == ModeModify || modifier))
+	if (is_open(&n, &modifier) && (q->mode == ModeModify || modifier))
 		return ErcFileInUse;
 	for (i = 0; i < nFILES; i++)
 		if (!files[i].used)
@@ -103,46 +113,87 @@ static erc_t do_open(struct RqBlk *r, struct fs_req *q)
 	return ErcOk;
 }
 
-static erc_t serve(struct RqBlk *r, struct fs_req *q)
+/* Requests that name a path. */
+static erc_t serve_path(struct RqBlk *r, struct fs_req *q)
 {
-	struct ofile *o = NULL;
-	struct fat_node n;
+	const char *path = (const char *)r->pData1;
+	U32 len = (U32)r->cbData1;
+	struct volume *v, *v2;
+	struct fnode n;
 	bool modifier;
 	erc_t erc;
-	U64 len = r->cbData1 < q->n ? r->cbData1 : q->n;
+
+	if (r->ServiceCode == FS_DIRSEC || r->ServiceCode == FS_READDIR) {
+		path = q->name2;
+		len = q->name2_len;
+	}
+	if ((erc = path_vol(path, len, &v)))
+		return erc;
+	if (v->ro && (r->ServiceCode == FS_CREATE || r->ServiceCode == FS_MKDIR ||
+		      r->ServiceCode == FS_RENAME || r->ServiceCode == FS_RMDIR))
+		return ErcReadOnly;
 
 	switch (r->ServiceCode) {
 	case FS_OPEN:
-		return do_open(r, q);
+		return do_open(r, q, v);
 	case FS_CREATE:
-		return fat_create((const char *)r->pData1, (U32)r->cbData1, (U8)(q->attr & ~ATTR_DIR), &n);
+		return v->ops->create(path, len, (U8)(q->attr & ~ATTR_DIR), &n);
 	case FS_MKDIR:
-		return fat_create((const char *)r->pData1, (U32)r->cbData1, ATTR_DIR, &n);
+		return v->ops->create(path, len, ATTR_DIR, &n);
 	case FS_RENAME:
-		if ((erc = fat_lookup((const char *)r->pData1, (U32)r->cbData1, &n)))
+		if ((erc = path_vol(q->name2, q->name2_len, &v2)))
 			return erc;
-		if (is_open(&n, 0, &modifier))
+		if (v2 != v)
+			return ErcRenameDrv;
+		if ((erc = v->ops->lookup(path, len, &n)))
+			return erc;
+		if (is_open(&n, &modifier))
 			return ErcFileInUse;
-		return fat_rename(&n, q->name2, q->name2_len);
+		return v->ops->rename(&n, q->name2, q->name2_len);
 	case FS_RMDIR:
-		if ((erc = fat_lookup((const char *)r->pData1, (U32)r->cbData1, &n)))
+		if ((erc = v->ops->lookup(path, len, &n)))
 			return erc == ErcNoSuchFile ? ErcNoSuchDir : erc;
 		if (!(n.attr & ATTR_DIR) || n.is_root)
 			return ErcNoSuchDir;
-		if (!fat_dir_empty(&n))
+		if (!v->ops->dir_empty(&n))
 			return ErcDirNotEmpty;
-		return fat_remove(&n);
+		return v->ops->remove(&n);
 	case FS_DIRSEC:
-		if ((erc = fat_lookup(q->name2, q->name2_len, &n)))
+		if (!v->ops->dir_sector)
+			return ErcNotSupported;		/* raw FAT sectors: use ReadDir */
+		if ((erc = v->ops->lookup(path, len, &n)))
 			return erc == ErcNoSuchFile ? ErcNoSuchDir : erc;
 		if (r->cbData1 < 512)
 			return ErcBadMemReq;
-		return fat_dir_sector(&n, q->sectnum, r->pData1);
+		return v->ops->dir_sector(&n, q->sectnum, r->pData1);
+	case FS_READDIR:
+		if ((erc = v->ops->lookup(path, len, &n)))
+			return erc == ErcNoSuchFile ? ErcNoSuchDir : erc;
+		if (!(n.attr & ATTR_DIR))
+			return ErcNoSuchDir;
+		if (r->cbData1 < sizeof(struct dir_entry))
+			return ErcBadMemReq;
+		return v->ops->readdir(&n, q->sectnum, (struct dir_entry *)r->pData1);
 	}
+	return ErcBadSvcCode;
+}
+
+static erc_t serve(struct RqBlk *r, struct fs_req *q)
+{
+	struct ofile *o;
+	const struct fs_ops *ops;
+	erc_t erc;
+	U64 len = r->cbData1 < q->n ? r->cbData1 : q->n;
+
+	if (r->ServiceCode == FS_OPEN || r->ServiceCode == FS_CREATE || r->ServiceCode == FS_MKDIR ||
+	    r->ServiceCode == FS_RENAME || r->ServiceCode == FS_RMDIR || r->ServiceCode == FS_DIRSEC ||
+	    r->ServiceCode == FS_READDIR)
+		return serve_path(r, q);
 
 	o = handle(q->handle, r->RqOwnerJob);
 	if (!o)
 		return ErcBadFileHandle;
+	ops = o->n.vol->ops;
 	switch (r->ServiceCode) {
 	case FS_CLOSE:
 		o->used = false;
@@ -150,13 +201,13 @@ static erc_t serve(struct RqBlk *r, struct fs_req *q)
 	case FS_DELETE:
 		if (o->mode != ModeModify)
 			return ErcReadOnly;
-		erc = fat_remove(&o->n);
+		erc = ops->remove(&o->n);
 		o->used = false;
 		return erc;
 	case FS_READB:
 		if (!o->stream)
 			return ErcBlockFile;
-		erc = fat_read(&o->n, o->lfa, r->pData1, len, &q->out);
+		erc = ops->read(&o->n, o->lfa, r->pData1, len, &q->out);
 		o->lfa += q->out;
 		return erc ? erc : q->out < q->n ? ErcEOF : ErcOk;
 	case FS_WRITEB:
@@ -164,7 +215,7 @@ static erc_t serve(struct RqBlk *r, struct fs_req *q)
 			return ErcBlockFile;
 		if (o->mode != ModeModify)
 			return ErcReadOnly;
-		erc = fat_write(&o->n, o->lfa, r->pData1, len, &q->out);
+		erc = ops->write(&o->n, o->lfa, r->pData1, len, &q->out);
 		o->lfa += q->out;
 		return erc;
 	case FS_READBLK:
@@ -174,7 +225,7 @@ static erc_t serve(struct RqBlk *r, struct fs_req *q)
 			return ErcBadFileSpec;
 		if (q->lfa >= o->n.size)
 			return ErcBeyondEOF;
-		return fat_read(&o->n, q->lfa, r->pData1, len, &q->out);
+		return ops->read(&o->n, q->lfa, r->pData1, len, &q->out);
 	case FS_WRITEBLK:
 		if (o->stream)
 			return ErcStreamFile;
@@ -182,14 +233,14 @@ static erc_t serve(struct RqBlk *r, struct fs_req *q)
 			return ErcReadOnly;
 		if (q->lfa % 512 || q->n % 512)
 			return ErcBadFileSpec;
-		return fat_write(&o->n, q->lfa, r->pData1, len, &q->out);
+		return ops->write(&o->n, q->lfa, r->pData1, len, &q->out);
 	case FS_GETSIZE:
 		q->out = o->n.size;
 		return ErcOk;
 	case FS_SETSIZE:
 		if (o->mode != ModeModify)
 			return ErcReadOnly;
-		erc = fat_truncate(&o->n, q->n);
+		erc = ops->truncate(&o->n, q->n);
 		if (o->lfa > o->n.size)
 			o->lfa = o->n.size;
 		return erc;
@@ -271,7 +322,8 @@ U32 fsys_open_count(void)
 static erc_t call(U32 code, const void *p1, U64 cb1, struct fs_req *q)
 {
 	U64 h, m[2];
-	U32 nsend = (code == FS_READB || code == FS_READBLK || code == FS_DIRSEC) ? 0 : 1;
+	U32 nsend = (code == FS_READB || code == FS_READBLK || code == FS_DIRSEC ||
+		     code == FS_READDIR) ? 0 : 1;
 	erc_t erc;
 
 	erc = Request("FILESYS ", code, current->exch, &h, nsend, (U8 *)p1, cb1, (U8 *)q, sizeof(*q),
@@ -430,4 +482,17 @@ erc_t GetSystemDisk(U8 *pDiskRet)
 {
 	*pDiskRet = vol_get('C') ? 2 : 0;	/* MMURTL: 0 = A, 2 = C */
 	return ErcOk;
+}
+
+erc_t ReadDir(const char *pPath, U32 cbPath, U32 dIndex, struct dir_entry *pEntryRet)
+{
+	struct fs_req q;
+
+	if (cbPath >= MAX_PATH)
+		return ErcBadFileSpec;
+	memset(&q, 0, sizeof(q));
+	memcpy(q.name2, pPath, cbPath);
+	q.name2_len = cbPath;
+	q.sectnum = dIndex;
+	return call(FS_READDIR, pEntryRet, sizeof(*pEntryRet), &q);
 }

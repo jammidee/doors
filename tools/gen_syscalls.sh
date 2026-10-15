@@ -13,4 +13,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 	grep -oE "PUBLIC _[A-Za-z]+\s+DF 00000000h:[0-9A-Fa-f]+h" "$root/OSSOURCE/MPUBLICS.ASM" |
 		awk '{name=$2; sub(/^_/,"",name); split($4,a,":"); sel=a[2]; sub(/h$/,"",sel);
 		      printf "X(%3d, %s)\n", (strtonum("0x" sel)-64)/8, name}'
+	# DOORS calls that MMURTL never had: numbered after MMURTL's last gate, never renumbered either.
+	printf '/* DOORS extensions (no MMURTL call gate) */\n'
+	printf 'X(110, ReadDir)\n'
 } > "$root/port64/include/doors/syscalls.def"

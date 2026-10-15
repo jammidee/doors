@@ -367,6 +367,18 @@ U64 syscall_dispatch(U64 n, U64 uargs)
 			return ErcBadLinAdd;
 		return GetDirSector(path, (U32)a[1], (U8 *)(uintptr_t)a[2], 512, (U32)a[4]);
 	}
+	case SYS_ReadDir: {
+		char path[MAX_PATH];
+
+		ARGS(4);
+		if (a[1] >= MAX_PATH)
+			return ErcBadFileSpec;
+		if ((erc = copy_in(path, a[0], a[1])))
+			return erc;
+		if (!urange(a[3], sizeof(struct dir_entry)))
+			return ErcBadLinAdd;
+		return ReadDir(path, (U32)a[1], (U32)a[2], (struct dir_entry *)(uintptr_t)a[3]);
+	}
 	case SYS_GetSystemDisk: {
 		U8 d;
 

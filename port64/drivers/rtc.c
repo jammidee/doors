@@ -56,3 +56,24 @@ void rtc_read(struct rtc_time *t)
 	t->month = a[4];
 	t->year = (U16)((a[6] >= 19 && a[6] <= 21 ? a[6] * 100 : 2000) + a[5]);
 }
+
+/* Days since 1970-01-01 for a civil date (Howard Hinnant's days_from_civil). */
+U32 days_from_civil(U32 y, U32 m, U32 d)
+{
+	U32 era, yoe, doy, doe;
+
+	y -= m <= 2;
+	era = y / 400;
+	yoe = y - era * 400;
+	doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+	doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	return era * 146097 + doe - 719468;
+}
+
+U32 unix_time(void)
+{
+	struct rtc_time t;
+
+	rtc_read(&t);
+	return days_from_civil(t.year, t.month, t.day) * 86400U + t.hour * 3600U + t.min * 60U + t.sec;
+}

@@ -40,7 +40,17 @@ int main(void)
 	CloseFile(h);
 
 	check("GetDirSector", GetDirSector("C:\\", 3, sec, sizeof(sec), 0) == ErcOk);
-	check("GetSystemDisk", GetSystemDisk(&disk) == ErcOk && disk == 2);
+	{
+		struct dir_entry de;
+		U32 i, seen = 0;
+
+		for (i = 0; ReadDir("F:\\", 3, i, &de) == ErcOk; i++)
+			seen |= Compare(de.name, "HELLO.TXT", 10) == 10 && de.size == 17 && !(de.attr & ATTR_DIR);
+		check("ReadDir F:\\ (ext4)", seen && i > 5);
+		check("ReadDir into kernel memory refused",
+		      ReadDir("F:\\", 3, 0, (struct dir_entry *)0xFFFFFFFF80100000UL) == ErcBadLinAdd);
+	}
+	check("GetSystemDisk",GetSystemDisk(&disk) == ErcOk && disk == 2);
 	check("bad handle", CloseFile(9999) == ErcBadFileHandle);
 
 	/* leave one file open on purpose: ExitJob must close it */

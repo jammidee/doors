@@ -3,6 +3,7 @@
 #
 #   make            build build/kernel.elf and build/doors.iso
 #   make run        boot in QEMU (window; serial log on this terminal)
+#   make console    boot in QEMU drawn in this terminal (curses); used by doors.bat
 #   make test       boot headless (tools/qemu_test.py); pass if the serial log shows every
 #                   TEST_MARKS string and the kernel exits QEMU through isa-debug-exit
 #   make debug      like run, but QEMU waits for gdb on :1234 (gdb build/kernel.elf -ex 'target remote :1234')
@@ -85,10 +86,15 @@ TEST_ARGS := \
 	--expect "fsuser: all file calls from ring 3 ok" \
 	--expect "M7: file calls from ring 3 ok" \
 	--expect "DOORS: M7 OK" \
+	--expect "M8: ext4 read ok" \
+	--expect "M8: ext4 write ok" \
+	--expect "M8: ext4 stress ok" \
+	--expect "M8: LoadNewJob from ext4 ok" \
+	--expect "DOORS: M8 OK" \
 	--send "M2: type doors=doors\n" \
 	--send "M5: type msg=msg\n"
 
-.PHONY: all run test debug clean
+.PHONY: all run console test debug clean
 
 all: $(ISO)
 
@@ -153,6 +159,12 @@ $(DISK): $(BUILD)/user/hello.elf tools/mkdisk.py
 
 run: $(ISO) $(DISK)
 	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio $(QEMU_EXTRA)
+
+# The DOORS screen drawn in this terminal (doors.bat uses it); serial goes to build/serial-run.log.
+# Quit: Alt+2 (or Esc then 2) for the QEMU monitor, then type quit.
+console: $(ISO) $(DISK)
+	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -display curses \
+		-serial file:$(BUILD)/serial-run.log $(QEMU_EXTRA)
 
 debug: $(ISO) $(DISK)
 	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio -s -S $(QEMU_EXTRA)

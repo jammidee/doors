@@ -68,6 +68,9 @@ cd port64
 make          # build/kernel.elf + build/doors.iso (GRUB, Multiboot2)
 make run      # QEMU window; serial log on the terminal. Add QEMU_EXTRA="-monitor unix:/tmp/doors.mon,server,nowait"
               #   to read the screen with tools/boot32/qscreen.py --sock /tmp/doors.mon
+make console  # the DOORS screen drawn in the terminal (QEMU -display curses); `doors.bat` at the repo root runs
+              #   this from Windows. WSL's QEMU has no GTK/SDL module, so `make run` has no window unless
+              #   qemu-system-gui is installed. Quit curses with Alt+2, then `quit`.
 make test     # headless (tools/qemu_test.py); passes if the serial log has every --expect line in TEST_ARGS and the kernel
               #   exits QEMU via isa-debug-exit (status 33). Kernel cmdline "test" enables the exit.
 make debug    # QEMU waits for gdb on :1234
@@ -145,8 +148,11 @@ make debug    # QEMU waits for gdb on :1234
   `LoadNewJob("NAME", ...)` and the monitor's `run NAME` find. `user/INITIAL.JOB` lists what starts at boot.
 - New system calls: add a `case SYS_Name` in `kernel/syscall.c` (check every user pointer with
   `urange`/`copy_in`/`copy_out`) and a stub in `libdoors.c`. Never edit `syscalls.def` by hand; it is generated.
+  MMURTL's calls are 0–109. A DOORS-only call goes at the end of the list in `tools/gen_syscalls.sh`
+  (`ReadDir` = 110) and is never renumbered.
 - Disks and files: `make test` builds `build/disk-test.img` (tools/mkdisk.py: MBR + FAT32 C:, FAT16 D:,
-  FAT12 E:) and afterwards `tools/check_disk.py` verifies it with `fsck.fat` and mtools. `make run` uses
+  FAT12 E:, ext4 F:) and afterwards `tools/check_disk.py` verifies it with `fsck.fat`/mtools and
+  `e2fsck -fn`/`debugfs`. `make run` uses
   `build/disk.img` (kept between runs; delete it for a fresh one).
 - File calls go through the FILESYS service (`kernel/fsys.c`) and keep MMURTL's names and modes. A request's
   receive buffers (index ≥ npSend) must be writable in the requester's space; `rqb_received` checks this, so

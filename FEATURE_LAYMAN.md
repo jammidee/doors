@@ -10,6 +10,10 @@ today's computers under the new name **DOORS**.
 
 *Last updated: 16 October 2026*
 
+**Try the new 64-bit DOORS:** double-click `doors.bat` in the main folder. A window opens, DOORS starts
+inside it, and you can type commands such as `help`, `vols` (list the disks) or `dir F:\` (list files).
+To leave, press Alt+2, type `quit` and press Enter.
+
 ---
 
 ## What works today
@@ -92,7 +96,8 @@ We'll build it in steps. Each step must start up and work before moving on:
 6. ✅ Programs sending messages to each other (done: tasks talk through mailboxes, and programs can ask named services for work, even across separate memory spaces)
 7. ✅ Running real programs, each in its own protected space (done: programs are loaded and started by name, a crashing program is stopped without taking the system down, and DOORS cleans up everything it used)
 8. ✅ Disks and files (done: DOORS reads and writes hard disks with the classic FAT format used by DOS, Windows and USB sticks, long file names included, and can start programs stored on disk)
-9. The modern file system (ext4: bigger files and disks, safe against power cuts)
+9. ✅ The modern file system (done: DOORS reads and writes ext4, the disk format Linux uses, with long names, upper- and lower-case names kept apart, and files bigger than 4 GB; Linux's own disk checker finds no damage after DOORS has been hammering the disk with random work)
+   - Next: protection against power cuts (the ext4 "journal") and starting DOORS from an ext4 disk
 10. The command line, editor and other programs, then re-check that everything above still works
 
 *Progress is logged day by day in the `devlogs` folder. The detailed technical plan is in `PLAN.md`.*

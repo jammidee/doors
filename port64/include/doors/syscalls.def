@@ -113,3 +113,5 @@ X(106, KillJob)
 X(107, GetSystemDisk)
 X(108, UnRegisterSvc)
 X(109, undelete)
+/* DOORS extensions (no MMURTL call gate) */
+X(110, ReadDir)

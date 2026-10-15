@@ -101,6 +101,7 @@ erc_t fat_mount(struct volume *v)
 		v->label[rootsecs - 1] = 0;
 	f->hint = 2;
 	v->fat = f;
+	v->ops = &fat_ops;
 	v->kind = f->type == 12 ? VOL_FAT12 : f->type == 16 ? VOL_FAT16 : VOL_FAT32;
 	nfat++;
 	return ErcOk;
@@ -443,7 +444,41 @@ static bool make83(const char *s, U32 n, U8 *out)
 
 /* ---- lookup ---- */
 
-static erc_t dir_find(struct fat *f, U32 dclus, const char *name, U32 nlen, struct fat_node *nd)
+/* FAT date/time -> Unix time. */
+static U32 fat2unix(U16 date, U16 time)
+{
+	U32 m = (date >> 5) & 15, d = date & 31;
+
+	if (!m || !d)
+		return 0;
+	return days_from_civil(1980 + (date >> 9), m, d) * 86400U + (time >> 11) * 3600U +
+	       ((time >> 5) & 63) * 60U + (time & 31) * 2U;
+}
+
+static void fill_node(struct fat *f, struct fnode *nd, U32 dclus, U32 idx, U32 lfn_start, U32 lfn_cnt,
+		      const U8 *e)
+{
+	const struct dirent83 *d = (const struct dirent83 *)e;
+
+	memset(nd, 0, sizeof(*nd));
+	nd->vol = f->vol;
+	nd->key = ((U64)dclus << 32) | idx;
+	nd->dir_clus = dclus;
+	nd->idx = idx;
+	nd->lfn_idx = lfn_start;
+	nd->lfn_n = lfn_cnt;
+	nd->first = d->clus_lo | (f->type == 32 ? (U32)d->clus_hi << 16 : 0);
+	nd->size = d->size;
+	nd->attr = d->attr;
+	nd->mtime = fat2unix(d->wrt_date, d->wrt_time);
+}
+
+/* Walk a directory: for every live entry (not '.', '..', deleted, volume label) call fn with its
+   long name (if any, else the 8.3 name) and its node. Stops when fn returns true. */
+typedef bool (*dir_fn)(void *ctx, const char *lname, U32 llen, const char *sname, U32 slen,
+		       const struct fnode *nd);
+
+static erc_t dir_walk(struct fat *f, U32 dclus, bool dots, dir_fn fn, void *ctx)
 {
 	U8 e[32], chk = 0;
 	char lfn[264], sn[16];
@@ -494,38 +529,60 @@ static erc_t dir_find(struct fat *f, U32 dclus, const char *name, U32 nlen, stru
 		{
 			U32 sl = short_name(e, sn);
 			bool long_ok = lfn_ok && lfn_sum(e) == chk && idx - lfn_start == lfn_cnt;
+			bool dot = (sl == 1 && sn[0] == '.') || (sl == 2 && sn[0] == '.' && sn[1] == '.');
+			struct fnode nd;
 
-			if ((long_ok && ieq(lfn, lfn_len, name, nlen)) || ieq(sn, sl, name, nlen)) {
-				const struct dirent83 *d = (const struct dirent83 *)e;
-
-				nd->vol = f->vol;
-				nd->dir_clus = dclus;
-				nd->idx = idx;
-				nd->lfn_idx = long_ok ? lfn_start : 0;
-				nd->lfn_n = long_ok ? lfn_cnt : 0;
-				nd->first = d->clus_lo | (f->type == 32 ? (U32)d->clus_hi << 16 : 0);
-				nd->size = d->size;
-				nd->attr = d->attr;
-				nd->is_root = false;
+			lfn_ok = false;
+			if (dot && !dots)
+				continue;
+			fill_node(f, &nd, dclus, idx, long_ok ? lfn_start : 0, long_ok ? lfn_cnt : 0, e);
+			if (fn(ctx, long_ok ? lfn : sn, long_ok ? lfn_len : sl, sn, sl, &nd))
 				return ErcOk;
-			}
 		}
-		lfn_ok = false;
 	}
-	return ErcNoSuchFile;
+	return ErcNoMatch;
 }
 
-static void root_node(struct fat *f, struct fat_node *nd)
+struct find_ctx {
+	const char *name;
+	U32 nlen;
+	struct fnode *out;
+	bool found;
+};
+
+static bool find_fn(void *c, const char *ln, U32 ll, const char *sn, U32 sl, const struct fnode *nd)
+{
+	struct find_ctx *x = c;
+
+	if (!ieq(ln, ll, x->name, x->nlen) && !ieq(sn, sl, x->name, x->nlen))
+		return false;
+	*x->out = *nd;
+	x->found = true;
+	return true;
+}
+
+static erc_t dir_find(struct fat *f, U32 dclus, const char *name, U32 nlen, struct fnode *nd)
+{
+	struct find_ctx x = { name, nlen, nd, false };
+	erc_t erc = dir_walk(f, dclus, true, find_fn, &x);
+
+	if (erc && erc != ErcNoMatch)
+		return erc;
+	return x.found ? ErcOk : ErcNoSuchFile;
+}
+
+static void root_node(struct fat *f, struct fnode *nd)
 {
 	memset(nd, 0, sizeof(*nd));
 	nd->vol = f->vol;
+	nd->key = ~0UL;
 	nd->first = f->type == 32 ? f->root_clus : 0;
 	nd->attr = ATTR_DIR;
 	nd->is_root = true;
 }
 
 /* The directory a node's children live in (its first cluster; '..' to the root gives 0). */
-static U32 child_dir(struct fat *f, const struct fat_node *nd)
+static U32 child_dir(struct fat *f, const struct fnode *nd)
 {
 	if (nd->is_root || (!nd->first && f->type == 32))
 		return f->type == 32 ? f->root_clus : 0;
@@ -534,7 +591,7 @@ static U32 child_dir(struct fat *f, const struct fat_node *nd)
 
 /* Resolve "X:\a\b\c". parent: stop at the directory holding the last component and return
    that component in *last / *lastlen. */
-static erc_t resolve(const char *path, U32 len, bool parent, struct fat_node *nd,
+static erc_t resolve(const char *path, U32 len, bool parent, struct fnode *nd,
 		     const char **last, U32 *lastlen)
 {
 	struct volume *v;
@@ -575,7 +632,7 @@ static erc_t resolve(const char *path, U32 len, bool parent, struct fat_node *nd
 		if (!(nd->attr & ATTR_DIR))
 			return ErcNoSuchDir;
 		{
-			struct fat_node child;
+			struct fnode child;
 			erc_t erc = dir_find(f, child_dir(f, nd), path + s, i - s, &child);
 
 			if (erc == ErcNoSuchFile) {
@@ -594,7 +651,7 @@ static erc_t resolve(const char *path, U32 len, bool parent, struct fat_node *nd
 	}
 }
 
-erc_t fat_lookup(const char *path, U32 len, struct fat_node *n)
+erc_t fat_lookup(const char *path, U32 len, struct fnode *n)
 {
 	return resolve(path, len, false, n, NULL, NULL);
 }
@@ -649,7 +706,7 @@ static erc_t make_alias(struct fat *f, U32 dclus, const char *s, U32 n, U8 *out)
 {
 	U32 i, dot = n, b = 0, e = 0, k;
 	char probe[16];
-	struct fat_node tmp;
+	struct fnode tmp;
 
 	for (i = n; i > 0; i--)
 		if (s[i - 1] == '.') {
@@ -693,7 +750,7 @@ static erc_t make_alias(struct fat *f, U32 dclus, const char *s, U32 n, U8 *out)
 /* Write the entries for `name` in directory dclus: long-name entries (if needed) + the 8.3 entry
    with the given attributes, first cluster and size. Fills nd. */
 static erc_t add_entry(struct fat *f, U32 dclus, const char *name, U32 nlen, U8 attr, U32 first,
-		       U64 size, const struct dirent83 *times, struct fat_node *nd)
+		       U64 size, const struct dirent83 *times, struct fnode *nd)
 {
 	U8 n11[11], e[32];
 	U32 nlfn = 0, start, i, k;
@@ -743,7 +800,9 @@ static erc_t add_entry(struct fat *f, U32 dclus, const char *name, U32 nlen, U8 
 	if ((erc = dir_write(f, dclus, start + nlfn, (const U8 *)&d)))
 		return erc;
 
+	memset(nd, 0, sizeof(*nd));
 	nd->vol = f->vol;
+	nd->key = ((U64)dclus << 32) | (start + nlfn);
 	nd->dir_clus = dclus;
 	nd->idx = start + nlfn;
 	nd->lfn_idx = start;
@@ -751,11 +810,11 @@ static erc_t add_entry(struct fat *f, U32 dclus, const char *name, U32 nlen, U8 
 	nd->first = first;
 	nd->size = size;
 	nd->attr = attr;
-	nd->is_root = false;
+	nd->mtime = fat2unix(d.wrt_date, d.wrt_time);
 	return ErcOk;
 }
 
-static erc_t mark_deleted(struct fat *f, const struct fat_node *nd)
+static erc_t mark_deleted(struct fat *f, const struct fnode *nd)
 {
 	U8 e[32];
 	U32 i;
@@ -789,9 +848,9 @@ static erc_t set_dotdot(struct fat *f, U32 dirclus, U32 parent)
 	return dir_write(f, dirclus, 1, e);
 }
 
-erc_t fat_create(const char *path, U32 len, U8 attr, struct fat_node *n)
+erc_t fat_create(const char *path, U32 len, U8 attr, struct fnode *n)
 {
-	struct fat_node dir, tmp;
+	struct fnode dir, tmp;
 	const char *name;
 	U32 nlen, first = 0, dclus;
 	struct fat *f;
@@ -840,7 +899,7 @@ erc_t fat_create(const char *path, U32 len, U8 attr, struct fat_node *n)
 	return erc;
 }
 
-erc_t fat_remove(struct fat_node *n)
+erc_t fat_remove(struct fnode *n)
 {
 	struct fat *f = n->vol->fat;
 	erc_t erc;
@@ -852,10 +911,10 @@ erc_t fat_remove(struct fat_node *n)
 	return n->first ? free_chain(f, n->first) : ErcOk;
 }
 
-erc_t fat_rename(struct fat_node *n, const char *newpath, U32 len)
+erc_t fat_rename(struct fnode *n, const char *newpath, U32 len)
 {
 	struct fat *f = n->vol->fat;
-	struct fat_node dir, tmp, moved;
+	struct fnode dir, tmp, moved;
 	struct dirent83 old;
 	const char *name;
 	U32 nlen, dclus;
@@ -887,7 +946,7 @@ erc_t fat_rename(struct fat_node *n, const char *newpath, U32 len)
 
 /* ---- file data ---- */
 
-erc_t fat_update(struct fat_node *n)
+erc_t fat_update(struct fnode *n)
 {
 	struct fat *f = n->vol->fat;
 	struct dirent83 d;
@@ -905,7 +964,7 @@ erc_t fat_update(struct fat_node *n)
 	return dir_write(f, n->dir_clus, n->idx, (const U8 *)&d);
 }
 
-erc_t fat_read(struct fat_node *n, U64 off, U8 *buf, U64 len, U64 *done)
+erc_t fat_read(struct fnode *n, U64 off, U8 *buf, U64 len, U64 *done)
 {
 	struct fat *f = n->vol->fat;
 	U64 cs = (U64)f->spc * 512, pos;
@@ -939,7 +998,7 @@ erc_t fat_read(struct fat_node *n, U64 off, U8 *buf, U64 len, U64 *done)
 }
 
 /* Make the chain hold at least `bytes` (new clusters zeroed when zero is set). */
-static erc_t grow(struct fat *f, struct fat_node *n, U64 bytes, bool zero)
+static erc_t grow(struct fat *f, struct fnode *n, U64 bytes, bool zero)
 {
 	U64 cs = (U64)f->spc * 512, need = (bytes + cs - 1) / cs, have = 0;
 	U32 c = n->first, next, last = 0;
@@ -967,7 +1026,7 @@ static erc_t grow(struct fat *f, struct fat_node *n, U64 bytes, bool zero)
 	return ErcOk;
 }
 
-erc_t fat_write(struct fat_node *n, U64 off, const U8 *buf, U64 len, U64 *done)
+erc_t fat_write(struct fnode *n, U64 off, const U8 *buf, U64 len, U64 *done)
 {
 	struct fat *f = n->vol->fat;
 	U64 cs = (U64)f->spc * 512, pos;
@@ -1010,7 +1069,7 @@ erc_t fat_write(struct fat_node *n, U64 off, const U8 *buf, U64 len, U64 *done)
 	return fat_update(n);
 }
 
-erc_t fat_truncate(struct fat_node *n, U64 size)
+erc_t fat_truncate(struct fnode *n, U64 size)
 {
 	struct fat *f = n->vol->fat;
 	U64 cs = (U64)f->spc * 512;
@@ -1062,7 +1121,7 @@ erc_t fat_truncate(struct fat_node *n, U64 size)
 
 /* ---- directory listing support ---- */
 
-erc_t fat_dir_sector(struct fat_node *dir, U32 sectnum, U8 *out)
+erc_t fat_dir_sector(struct fnode *dir, U32 sectnum, U8 *out)
 {
 	struct fat *f = dir->vol->fat;
 	U32 dclus = child_dir(f, dir), c;
@@ -1083,7 +1142,7 @@ erc_t fat_dir_sector(struct fat_node *dir, U32 sectnum, U8 *out)
 	return rd(f, clus_lba(f, c) + sectnum % f->spc, out);
 }
 
-bool fat_dir_empty(struct fat_node *dir)
+bool fat_dir_empty(struct fnode *dir)
 {
 	struct fat *f = dir->vol->fat;
 	U32 dclus = child_dir(f, dir), idx;
@@ -1098,3 +1157,58 @@ bool fat_dir_empty(struct fat_node *dir)
 	}
 	return true;
 }
+
+/* ---- ReadDir and the ops table ---- */
+
+struct nth_ctx {
+	U32 want, at;
+	struct dir_entry *out;
+	bool found;
+};
+
+static bool nth_fn(void *c, const char *ln, U32 ll, const char *sn, U32 sl, const struct fnode *nd)
+{
+	struct nth_ctx *x = c;
+
+	(void)sn;
+	(void)sl;
+	if (x->at++ != x->want)
+		return false;
+	if (ll > sizeof(x->out->name) - 1)
+		ll = sizeof(x->out->name) - 1;
+	memcpy(x->out->name, ln, ll);
+	x->out->name[ll] = 0;
+	x->out->size = nd->size;
+	x->out->attr = nd->attr;
+	x->out->mtime = nd->mtime;
+	x->found = true;
+	return true;
+}
+
+static erc_t fat_readdir(struct fnode *dir, U32 index, struct dir_entry *out)
+{
+	struct fat *f = dir->vol->fat;
+	struct nth_ctx x = { index, 0, out, false };
+	erc_t erc;
+
+	if (!(dir->attr & ATTR_DIR))
+		return ErcNoSuchDir;
+	erc = dir_walk(f, child_dir(f, dir), false, nth_fn, &x);
+	if (erc && erc != ErcNoMatch)
+		return erc;
+	return x.found ? ErcOk : ErcNoMatch;
+}
+
+const struct fs_ops fat_ops = {
+	.name = "FAT",
+	.lookup = fat_lookup,
+	.create = fat_create,
+	.remove = fat_remove,
+	.rename = fat_rename,
+	.read = fat_read,
+	.write = fat_write,
+	.truncate = fat_truncate,
+	.readdir = fat_readdir,
+	.dir_empty = fat_dir_empty,
+	.dir_sector = fat_dir_sector,
+};
