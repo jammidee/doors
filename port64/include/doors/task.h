@@ -22,10 +22,9 @@
 #define TIME_SLICE      3		/* ticks (30 ms), as TMRCODE.ASM */
 #define DEFAULT_PRIORITY 25		/* MMURTL's default for user tasks (BUSYLOOP.C) */
 
-#define ErcNoMoreTSSs   45		/* out of tasks (MMURTL: Task State Segments) */
-#define ErcBadPriority  50
-#define ErcNotSupported 227		/* MMURTL's ErcNotSupported (MSTATUS.H) */
+#include <doors/erc.h>
 
+/* TASK_BLOCKED = waiting at an exchange (WaitMsg; Sleep is a WaitMsg on the task's own exchange). */
 enum task_state { TASK_FREE, TASK_READY, TASK_RUNNING, TASK_SLEEPING, TASK_BLOCKED, TASK_DEAD };
 
 struct addr_space;
@@ -40,7 +39,9 @@ struct task {
 	U32 exch;			/* MMURTL TSS_Exch: the task's own exchange (M5) */
 	struct addr_space *space;
 	U64 stack_lo, stack_hi;		/* kernel stack (stack_lo = lowest mapped byte) */
-	U64 wake_tick;			/* TASK_SLEEPING: tick to wake at */
+	void *lb_ret;			/* MMURTL pLBRet: link block delivered to a waiting task */
+	erc_t wait_erc;			/* non-zero: the wait ended without a message (exchange freed) */
+	bool own_exch;			/* exch was allocated for this task (freed when it ends) */
 	U64 ticks;			/* CPU ticks used (stats) */
 	struct task *next;		/* ready / sleep queue link (MMURTL NextTSS) */
 	char name[16];
@@ -51,6 +52,9 @@ extern struct task *current;
 void sched_init(void);			/* the caller becomes task 1 (job 1) */
 void sched_tick(void);			/* from the timer interrupt */
 void sched_yield(void);
+void sched_block(void);			/* interrupts off; current already queued on an exchange */
+void sched_wake(struct task *t, bool may_switch);
+void sched_irq_exit(void);		/* end of an IRQ handler: preempt for a higher priority */
 struct task *task_create(const char *name, void (*entry)(void *), void *arg, U8 priority,
 			 U32 job, erc_t *erc);
 NORETURN void task_exit(void);
@@ -70,7 +74,6 @@ erc_t NewTask(U32 JobNum, U32 CodeSeg, U32 Priority, U32 fDebug, U32 Exch, U64 E
 erc_t SpawnTask(void (*pEntry)(void), U32 dPriority, U32 fDebug, U8 *pStack, U32 fOSCode);
 erc_t SetPriority(U32 bPriority);
 erc_t GetPriority(U8 *pbPriorityRet);
-erc_t Sleep(U32 nTicks);
 erc_t GetTimerTick(U64 *pTickRet);
 
 #endif

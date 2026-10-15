@@ -116,13 +116,22 @@ Each phase ends with something that boots and can be checked in QEMU. Tick items
   50 ticks); 34 switches with 19k register-heavy rounds all correct; stacks reclaimed.
 
 ### Phase 5 — Messaging and IPC (port `KERNEL.ASM` messaging half, `RQBCODE.ASM`, `SVCCODE.ASM`)
-- [ ] Exchanges and link blocks: `AllocExch`, `DeAllocExch`, `SendMsg`, `ISendMsg`, `WaitMsg`, `CheckMsg`.
-- [ ] Request blocks: `Request`, `Respond`, `MoveRequest`, `SendAbort`. Widen pointer and size fields
-      in `RQB.INC` to 64-bit, and keep the codes and exchanges 32-bit.
-- [ ] Service registry: `RegisterSvc`, name lookup (`GetExchange`).
-- [ ] Fix the original `__Request` bug where `dData2` is read from `[EBP+20]` (same as `dData0`),
-      `OSSOURCE/KERNEL.ASM:546`. Confirm it against the book before treating it as a bug.
+- [x] Exchanges and link blocks (`kernel/msg.c`): `AllocExch`, `DeAllocExch`, `GetTSSExch`, `SendMsg`,
+      `ISendMsg`, `WaitMsg`, `CheckMsg`. Messages are two U64 (MMURTL: two DWORDs). Pools are carved from
+      AllocOSPage: 1024 exchanges, 4096 link blocks.
+- [x] Request blocks (`kernel/rqb.c`): `Request`, `Respond`, `MoveRequest`; `struct RqBlk` mirrors RQB.INC
+      with pointers and sizes widened (codes, exchanges, dData0-2 stay 32-bit). The service's
+      WaitMsg/CheckMsg aliases pData1/pData2 into its job, and Respond de-aliases (as MMURTL).
+      `SendAbort` → Phase 6 (needs job teardown).
+- [x] Service registry: `RegisterSvc`, `UnRegisterSvc`, name lookup (8-byte, case sensitive).
+- [x] Timer blocks: `Alarm`, `KillAlarm`, and `Sleep` rebuilt on them (a message to the task's own
+      exchange), replacing the M4 sleep list.
+- [x] The `__Request` `dData2` bug: MMURTL's own header documents dData2 at `[EBP+12]` but the code reads
+      `[EBP+20]` (dData0's slot), so services got dData0 twice. Fixed; the self-test checks 7,8,9 arrive intact.
+- [x] Keyboard keys delivered as messages (ISendMsg from the IRQ); the interactive monitor blocks in WaitMsg.
 - **Done when:** a test service answers `Request`s from a client task, and timeouts/aborts behave.
+  ✅ 2026-10-16: NUMBERS service in the same job; UPCASE service in job 3 answering a job 2 client through
+  aliased buffers and a MoveRequest to a worker; Alarm timeouts; ErcOwnerAbort path; no leaks.
 
 ### Phase 6 — Ring 3, system calls, jobs (port `JOBC.C`, `JOBCODE.ASM`, `MPUBLICS.ASM`)
 - [ ] `SYSCALL`/`SYSRET` entry: MSR setup (STAR, LSTAR, FMASK), swap to the kernel stack, dispatch table.

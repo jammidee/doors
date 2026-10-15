@@ -39,7 +39,7 @@ Each milestone has a demo (what you'll see) and acceptance checks (what must pas
 | M2 | **Interrupts & time** ✅ | Ticking clock and keyboard echo | Exceptions print register dumps; PIT 10 ms tick matches original rate |
 | M3 | **Memory** ✅ | Free/used page stats on screen | Allocator self-tests pass; aliasing works across two address spaces |
 | M4 | **Tasks** ✅ | Two kernel tasks at different priorities interleaving | Preemption and priority order match the 32-bit scheduler on the same scenario |
-| M5 | **Messaging** | Test service answering `Request`s | Host unit tests + in-kernel IPC tests for every primitive (`SendMsg`…`MoveRequest`) |
+| M5 | **Messaging** ✅ | Test service answering `Request`s | Host unit tests + in-kernel IPC tests for every primitive (`SendMsg`…`MoveRequest`) |
 | M6 | **User mode & jobs** | Ring-3 ELF "hello" job started from `INITIAL.JOB` | Bad pointers return errors (no kernel crash); jobs exit and free all memory |
 | M7 | **Disks & FAT** | `dir` of a FAT image from a test job | Read/write FAT12/16/32 matches host `mtools` view of the same image |
 | M8 | **ext4** | Boot with ext4 root; long names; >4 GB file | Random stress test, then host `e2fsck -fn` reports clean, run repeatedly |

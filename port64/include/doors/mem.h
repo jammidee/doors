@@ -30,15 +30,7 @@
 #define PTE_NX      (1UL << 63)
 #define PTE_ADDR    0x000FFFFFFFFFF000UL
 
-/* MMURTL error codes (MOSEDF.INC). */
-#define ErcNoMem      101	/* not enough memory (no more pages) */
-#define ErcBadMemPage 102	/* bad physical page */
-#define ErcBadMemReq  104	/* invalid size for memory request */
-#define ErcInternalMem 106
-#define ErcBadLinAdd  108	/* bad linear address passed to DeAllocPage */
-#define ErcShortMem   109	/* fewer valid pages than requested were deallocated */
-#define ErcBadAlias   111	/* address passed in wasn't an alias */
-#define ErcBadJobNum  70
+#include <doors/erc.h>
 
 /* ---- physical memory (kernel/pmm.c) ---- */
 struct boot_info;

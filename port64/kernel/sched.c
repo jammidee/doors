@@ -9,6 +9,7 @@
 #include <doors/console.h>
 #include <doors/cpu.h>
 #include <doors/mem.h>
+#include <doors/msg.h>
 #include <doors/string.h>
 #include <doors/task.h>
 
@@ -20,7 +21,7 @@ struct task *current;
 static struct task tasks[MAX_TASKS];
 static struct task *idle;
 static struct { struct task *head, *tail; } rdyq[nPRI];
-static struct task *sleepers, *zombies;
+static struct task *zombies;
 static U64 switch_tick;
 static struct sched_stats st;
 
@@ -82,6 +83,8 @@ static void reap(void)
 			if (pte)
 				pmm_free(pte & PTE_ADDR);
 		}
+		if (t->own_exch)
+			exch_free(t->exch);
 		memset(t, 0, sizeof(*t));	/* TASK_FREE */
 	}
 }
@@ -137,26 +140,39 @@ static void maybe_preempt(bool slice)
 
 void sched_tick(void)
 {
-	struct task **pp = &sleepers;
-	U64 now = timer_ticks();
-
 	if (!current)
 		return;
 	current->ticks++;
 	if (current == idle)
 		st.idle_ticks++;
-
-	while (*pp) {				/* wake sleepers whose time is up */
-		struct task *t = *pp;
-
-		if (t->wake_tick <= now) {
-			*pp = t->next;
-			rdy_push(t);
-		} else {
-			pp = &t->next;
-		}
-	}
+	msg_timer_tick();		/* Sleep/Alarm timer blocks: ISendMsg when they expire */
 	maybe_preempt(true);
+}
+
+/* End of an IRQ handler: a task it made ready (ISendMsg) runs now if it strictly outranks the
+   interrupted one; equal priorities wait for the time slice, as in MMURTL. */
+void sched_irq_exit(void)
+{
+	if (current)
+		maybe_preempt(false);
+}
+
+/* The current task waits (it has already been queued on an exchange). Interrupts off. */
+void sched_block(void)
+{
+	current->state = TASK_BLOCKED;
+	schedule();
+}
+
+/* A waiting task got its message: make it ready. may_switch (task context only): run it now if
+   its priority is equal or higher than the caller's (MMURTL SendMsg/Request/Respond). */
+void sched_wake(struct task *t, bool may_switch)
+{
+	rdy_push(t);
+	if (may_switch && current != idle && t->priority <= current->priority) {
+		rdy_push(current);		/* behind t among equal priorities */
+		switch_task(rdy_pop());
+	}
 }
 
 void sched_yield(void)
@@ -251,6 +267,20 @@ static struct task *alloc_task(const char *name, void (*entry)(void *), void *ar
 	t->priority = priority;
 	t->space = job_space(job) ? job_space(job) : &kernel_space;
 	memcpy(t->name, name, strlen(name) < sizeof(t->name) ? strlen(name) : sizeof(t->name) - 1);
+
+	/* Every task gets its own exchange (MMURTL TSS_Exch), used by Sleep and GetTSSExch. */
+	if (msg_ready()) {
+		*erc = exch_alloc_job(job, &t->exch);
+		if (*erc) {
+			t->state = TASK_DEAD;
+			t->next = zombies;
+			zombies = t;
+			reap();
+			return NULL;
+		}
+		t->own_exch = true;
+	}
+	t->state = TASK_READY;		/* claimed (also keeps the slot from being reused) */
 	*erc = ErcOk;
 	return t;
 }
@@ -342,7 +372,12 @@ erc_t NewTask(U32 JobNum, U32 CodeSeg, U32 Priority, U32 fDebug, U32 Exch, U64 E
 	t = alloc_task("task", spawn_entry, (void *)(uintptr_t)EIP, (U8)Priority, JobNum, &erc);
 	if (t) {
 		t->fdebug = (U8)fDebug;
-		t->exch = Exch;
+		if (Exch) {			/* the caller supplies the task's exchange (MMURTL) */
+			if (t->own_exch)
+				exch_free(t->exch);
+			t->exch = Exch;
+			t->own_exch = false;
+		}
 		rdy_push(t);
 		maybe_preempt(false);
 	}
@@ -391,23 +426,7 @@ erc_t GetPriority(U8 *pbPriorityRet)
 	return ErcOk;
 }
 
-erc_t Sleep(U32 nTicks)
-{
-	U64 f;
-
-	if (!nTicks) {
-		sched_yield();
-		return ErcOk;
-	}
-	f = irq_save();
-	current->wake_tick = timer_ticks() + nTicks;
-	current->state = TASK_SLEEPING;
-	current->next = sleepers;
-	sleepers = current;
-	schedule();
-	irq_restore(f);
-	return ErcOk;
-}
+/* Sleep is in kernel/msg.c: a timer block that messages the task's own exchange (MMURTL). */
 
 erc_t GetTimerTick(U64 *pTickRet)
 {

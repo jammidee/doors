@@ -128,3 +128,9 @@ make debug    # QEMU waits for gdb on :1234
 - Code that can block (Sleep, later WaitMsg) must run in task context, never in an interrupt handler.
   Interrupt handlers may make tasks ready; the timer may switch tasks inside its IRQ (the EOI is sent first).
 - Waiting loops in tasks should block (`Sleep`, later `WaitMsg`) rather than `hlt`, so lower priorities can run.
+- Messaging (`kernel/msg.c`, `kernel/rqb.c`, `include/doors/msg.h`): MMURTL names, parameters and error codes
+  (`include/doors/erc.h` holds all error codes). Messages are two U64. Use `ISendMsg` in interrupt handlers and
+  `SendMsg` in tasks. A service reads `struct RqBlk` from the handle it receives; its `pData1`/`pData2` are
+  already aliased into the service's job.
+- Every task has its own exchange (`GetTSSExch`). `Sleep` = `Alarm` on it + `WaitMsg`, so don't use a task's
+  own exchange for other traffic.

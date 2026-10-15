@@ -52,6 +52,7 @@ void timer_sleep(U64 ticks);
 
 void kbd_init(void);
 int  kbd_getc(void);		/* -1 if no key waiting */
+void kbd_set_exch(U32 exch);	/* send keys as messages to exch instead (0 = polling) */
 
 static inline void sti(void) { __asm__ volatile("sti"); }
 

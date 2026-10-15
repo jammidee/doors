@@ -6,6 +6,7 @@
 #include <doors/cpu.h>
 #include <doors/kernel.h>
 #include <doors/mem.h>
+#include <doors/msg.h>
 #include <doors/multiboot2.h>
 #include <doors/string.h>
 #include <doors/task.h>
@@ -111,6 +112,14 @@ static void cmd(const char *line)
 		sched_get_stats(&s);
 		kprintf("Switches %lu (preemptive %lu), idle ticks %lu, ready %u\n",
 			s.switches, s.slices, s.idle_ticks, s.ready);
+		{
+			struct msg_stats m;
+
+			msg_get_stats(&m);
+			kprintf("Free: exchanges %u, link blocks %u, request blocks %u; "
+				"timers %u, services %u\n", m.exch_free, m.lb_free, m.rqb_free,
+				m.tmr_used, m.svc_used);
+		}
 	} else if (!strcmp(line, "spin")) {
 		static erc_t e;
 
@@ -138,17 +147,20 @@ static void breakpoint(struct regs *r)
 static NORETURN void interactive(void)
 {
 	char line[64];
-	U32 n = 0;
+	U32 n = 0, kexch;
+	U64 msg[2];
 
 	isr_register(3, breakpoint);
+	if (AllocExch(&kexch))
+		panic("no exchange for the keyboard");
+	kbd_set_exch(kexch);		/* keys arrive as messages; WaitMsg blocks until one does */
 	kprintf("Type 'help' for commands. Keys are echoed.\n> ");
 	for (;;) {
-		int c = kbd_getc();
+		int c;
 
-		if (c < 0) {
-			Sleep(1);	/* poll every 10 ms; lets lower-priority tasks run (M5: wait on the keyboard exchange) */
+		if (WaitMsg(kexch, msg))
 			continue;
-		}
+		c = (int)msg[0];
 		if (c == '\n') {
 			console_putc('\n');
 			line[n] = '\0';
@@ -184,6 +196,7 @@ void kmain(U32 magic, U64 mbi_phys)
 	idt_init();
 	pic_init();
 	sched_init();		/* kmain becomes task 1; before the timer starts calling sched_tick */
+	msg_init();		/* exchanges, link blocks, request blocks, services, timer blocks */
 	pit_init(TICK_HZ);
 	kbd_init();
 	sti();

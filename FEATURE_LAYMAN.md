@@ -89,7 +89,7 @@ We'll build it in steps. Each step must start up and work before moving on:
 3. ✅ Keyboard, clock and screen (done: the 64-bit DOORS keeps time 100 times a second, reads the keyboard, and shows a clear error report if something goes wrong)
 4. ✅ Memory management (done: DOORS hands out memory safely, keeps each program's memory private, and catches runaway programs before they damage anything)
 5. ✅ Running several programs at once (done: the 64-bit DOORS shares the processor fairly between tasks and lets urgent ones go first)
-6. Programs sending messages to each other
+6. ✅ Programs sending messages to each other (done: tasks talk through mailboxes, and programs can ask named services for work, even across separate memory spaces)
 7. Disks, then the new file system
 8. The command line, editor and other programs, then re-check that everything above still works
 

@@ -57,7 +57,17 @@ TEST_ARGS := \
 	--expect "M4: context switch ok" \
 	--expect "M4: NewTask/SpawnTask/SetPriority/GetPriority ok" \
 	--expect "DOORS: M4 OK" \
-	--send "M2: type doors=doors\n"
+	--expect "M5: exchanges ok" \
+	--expect "M5: WaitMsg/SendMsg ok" \
+	--expect "M5: ping-pong ok" \
+	--expect "M5: Alarm/KillAlarm ok" \
+	--expect "M5: keyboard ISendMsg ok" \
+	--expect "M5: Request/Respond ok" \
+	--expect "M5: cross-job Request ok" \
+	--expect "M5: no leaks" \
+	--expect "DOORS: M5 OK" \
+	--send "M2: type doors=doors\n" \
+	--send "M5: type msg=msg\n"
 
 .PHONY: all run test debug clean
 

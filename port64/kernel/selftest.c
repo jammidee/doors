@@ -6,6 +6,7 @@
 #include <doors/cpu.h>
 #include <doors/kernel.h>
 #include <doors/mem.h>
+#include <doors/msg.h>
 #include <doors/string.h>
 #include <doors/task.h>
 #include <doors/x86.h>
@@ -406,6 +407,361 @@ static void test_task_calls(void)
 	kprintf("DOORS: M4 OK\n");
 }
 
+/* ======================================================================== M5 */
+
+static struct msg_stats m5_base;
+static U64 m5_pages;
+
+static void test_exchanges(void)
+{
+	U32 e, e2;
+	U64 m[2];
+	struct msg_stats s;
+
+	msg_get_stats(&m5_base);
+	m5_pages = pmm_free_pages();
+
+	CHECK(AllocExch(&e) == ErcOk, "AllocExch failed");
+	CHECK(CheckMsg(e, m) == ErcNoMsg, "CheckMsg on an empty exchange");
+	CHECK(SendMsg(e, 1, 2) == ErcOk && SendMsg(e, 3, 4) == ErcOk && SendMsg(e, 5, 6) == ErcOk,
+	      "SendMsg failed");
+	CHECK(CheckMsg(e, m) == ErcOk && m[0] == 1 && m[1] == 2, "CheckMsg: wrong first message");
+	CHECK(WaitMsg(e, m) == ErcOk && m[0] == 3 && m[1] == 4, "WaitMsg: wrong second message");
+	CHECK(WaitMsg(e, m) == ErcOk && m[0] == 5 && m[1] == 6, "WaitMsg: wrong third message");
+	CHECK(CheckMsg(e, m) == ErcNoMsg, "exchange not empty after 3 messages");
+	CHECK(SendMsg(0, 0, 0) == ErcOutOfRange && SendMsg(nEXCH, 0, 0) == ErcOutOfRange,
+	      "out-of-range exchange accepted");
+	CHECK(DeAllocExch(e) == ErcOk, "DeAllocExch failed");
+	CHECK(SendMsg(e, 0, 0) == ErcNotAlloc && WaitMsg(e, m) == ErcNotAlloc,
+	      "freed exchange still usable");
+
+	CHECK(AllocExch(&e2) == ErcOk && SendMsg(e2, 7, 8) == ErcOk && DeAllocExch(e2) == ErcOk,
+	      "DeAllocExch with a queued message");
+	msg_get_stats(&s);
+	CHECK(s.lb_free == m5_base.lb_free && s.exch_free == m5_base.exch_free,
+	      "link blocks or exchanges leaked (%u/%u lb, %u/%u exch)", s.lb_free,
+	      m5_base.lb_free, s.exch_free, m5_base.exch_free);
+	kprintf("M5: exchanges ok (FIFO, CheckMsg, error codes, DeAllocExch frees queued messages)\n");
+}
+
+static U32 w_exch;
+static volatile U32 w_got;
+
+static void waiter(void *unused)
+{
+	U64 m[2];
+
+	(void)unused;
+	if (WaitMsg(w_exch, m) == ErcOk)
+		w_got++;
+}
+
+static void test_wait_switch(void)
+{
+	static const U8 prio[] = { 10, 20, 30 };	/* higher, equal, lower than kmain (20) */
+	erc_t e;
+	U32 i;
+
+	CHECK(AllocExch(&w_exch) == ErcOk, "AllocExch failed");
+	for (i = 0; i < 3; i++) {
+		w_got = 0;
+		task_create("waiter", waiter, NULL, prio[i], 1, &e);
+		Sleep(2);			/* let it reach WaitMsg */
+		CHECK(SendMsg(w_exch, 42, 0) == ErcOk, "SendMsg to a waiting task failed");
+		if (prio[i] <= 20) {
+			CHECK(w_got == 1, "priority %u receiver did not run at SendMsg", prio[i]);
+		} else {
+			CHECK(w_got == 0, "priority %u receiver ran before kmain blocked", prio[i]);
+			Sleep(2);
+			CHECK(w_got == 1, "priority %u receiver never got its message", prio[i]);
+		}
+	}
+	DeAllocExch(w_exch);
+	kprintf("M5: WaitMsg/SendMsg ok (equal or higher priority receiver runs at SendMsg, "
+		"lower one later)\n");
+}
+
+static U32 pp_a, pp_b;
+static volatile U64 pp_bad;
+
+static void ponger(void *n)
+{
+	U64 m[2], i;
+
+	for (i = 0; i < (uintptr_t)n; i++) {
+		if (WaitMsg(pp_a, m) || m[0] != i)
+			pp_bad++;
+		SendMsg(pp_b, m[0] + 1, 0);
+	}
+}
+
+static void test_ping_pong(void)
+{
+	const U64 n = 10000;
+	struct sched_stats s0, s1;
+	U64 m[2], i, t0, bad = 0;
+	erc_t e;
+
+	CHECK(AllocExch(&pp_a) == ErcOk && AllocExch(&pp_b) == ErcOk, "AllocExch failed");
+	pp_bad = 0;
+	task_create("ponger", ponger, (void *)n, 20, 1, &e);
+	Sleep(1);
+	sched_get_stats(&s0);
+	t0 = timer_ticks();
+	for (i = 0; i < n; i++) {
+		SendMsg(pp_a, i, 0);
+		if (WaitMsg(pp_b, m) || m[0] != i + 1)
+			bad++;
+	}
+	sched_get_stats(&s1);
+	CHECK(!bad && !pp_bad, "ping-pong: %lu / %lu wrong replies", bad, pp_bad);
+	Sleep(1);
+	DeAllocExch(pp_a);
+	DeAllocExch(pp_b);
+	kprintf("M5: ping-pong ok (%lu round trips in %lu ticks, %lu task switches)\n", n,
+		timer_ticks() - t0, s1.switches - s0.switches);
+}
+
+static void test_alarm(void)
+{
+	U32 e, own;
+	U64 m[2], t0, dt;
+
+	CHECK(GetTSSExch(&own) == ErcOk && own == current->exch && own, "GetTSSExch");
+	CHECK(AllocExch(&e) == ErcOk, "AllocExch failed");
+	t0 = timer_ticks();
+	CHECK(Alarm(e, 5) == ErcOk, "Alarm failed");
+	CHECK(WaitMsg(e, m) == ErcOk && m[0] == TIMER_MSG && m[1] == TIMER_MSG,
+	      "Alarm delivered (%lx, %lx)", m[0], m[1]);
+	dt = timer_ticks() - t0;
+	CHECK(dt >= 5 && dt <= 6, "Alarm(5) fired after %lu ticks", dt);
+	CHECK(Alarm(e, 5) == ErcOk && KillAlarm(e) == ErcOk, "KillAlarm failed");
+	Sleep(10);
+	CHECK(CheckMsg(e, m) == ErcNoMsg, "a killed alarm still fired");
+	CHECK(Alarm(0, 1) == ErcOutOfRange, "Alarm on exchange 0 accepted");
+	DeAllocExch(e);
+	kprintf("M5: Alarm/KillAlarm ok (Alarm(5) fired after %lu ticks; Sleep uses the same timer "
+		"blocks)\n", dt);
+}
+
+/* Keys arrive as messages sent with ISendMsg from the keyboard IRQ; an Alarm on the same
+   exchange is the timeout. */
+static void test_kbd_messages(void)
+{
+	char line[16];
+	U32 e, n = 0;
+	U64 m[2];
+
+	CHECK(AllocExch(&e) == ErcOk, "AllocExch failed");
+	kbd_set_exch(e);
+	Alarm(e, 30 * 100);
+	kprintf("M5: type msg\n");
+	for (;;) {
+		CHECK(WaitMsg(e, m) == ErcOk, "WaitMsg on the keyboard exchange failed");
+		CHECK(m[0] != TIMER_MSG, "timed out waiting for keyboard messages");
+		if (m[0] == '\n')
+			break;
+		if (n < sizeof(line) - 1)
+			line[n++] = (char)m[0];
+	}
+	line[n] = '\0';
+	kbd_set_exch(0);
+	KillAlarm(e);
+	DeAllocExch(e);
+	CHECK(!strcmp(line, "msg"), "keyboard messages: got '%s', expected 'msg'", line);
+	kprintf("M5: keyboard ISendMsg ok (keys delivered as messages from the IRQ)\n");
+}
+
+/* ---- Request / Respond with a NUMBERS service in the same job (MSAMPLES/SERVICE) ---- */
+
+static U32 num_exch;
+static volatile U32 num_d[3];
+
+static void numbers_service(void *unused)
+{
+	U64 m[2], next = 0;
+
+	(void)unused;
+	AllocExch(&num_exch);
+	RegisterSvc("NUMBERS ", num_exch);
+	for (;;) {
+		struct RqBlk *r;
+
+		if (WaitMsg(num_exch, m))
+			continue;
+		r = (struct RqBlk *)(uintptr_t)m[0];
+		if (r->ServiceCode == 1) {
+			*(U64 *)r->pData1 = next++;
+			num_d[0] = r->dData0;
+			num_d[1] = r->dData1;
+			num_d[2] = r->dData2;
+			Respond(m[0], ErcOk);
+		} else if (r->ServiceCode == 0) {	/* shut down */
+			UnRegisterSvc("NUMBERS ");
+			Respond(m[0], ErcOk);
+			DeAllocExch(num_exch);
+			return;
+		} else {
+			Respond(m[0], ErcBadSvcCode);
+		}
+	}
+}
+
+static void test_request(void)
+{
+	U32 resp;
+	U64 h, m[2], num = 99;
+	erc_t e;
+	struct msg_stats s;
+
+	CHECK(task_create("numbers", numbers_service, NULL, 15, 1, &e), "service task");
+	CHECK(AllocExch(&resp) == ErcOk, "AllocExch failed");
+
+	CHECK(Request("NUMBERS ", 1, resp, &h, 0, (U8 *)&num, sizeof(num), NULL, 0, 7, 8, 9) == ErcOk,
+	      "Request failed");
+	CHECK(WaitMsg(resp, m) == ErcOk && m[0] == h && m[1] == ErcOk, "response (%lx, %lu)",
+	      m[0], m[1]);
+	CHECK(num == 0, "first number %lu", num);
+	CHECK(num_d[0] == 7 && num_d[1] == 8 && num_d[2] == 9,
+	      "dData0-2 arrived as %u,%u,%u (MMURTL bug: dData2 = dData0)", num_d[0], num_d[1],
+	      num_d[2]);
+	CHECK(Request("NUMBERS ", 1, resp, &h, 0, (U8 *)&num, sizeof(num), NULL, 0, 0, 0, 0) == ErcOk &&
+	      WaitMsg(resp, m) == ErcOk && num == 1, "second number %lu", num);
+	CHECK(Request("NUMBERS ", 5, resp, &h, 0, NULL, 0, NULL, 0, 0, 0, 0) == ErcOk &&
+	      WaitMsg(resp, m) == ErcOk && m[1] == ErcBadSvcCode, "bad service code: %lu", m[1]);
+	CHECK(Request("NOSUCH  ", 1, resp, &h, 0, NULL, 0, NULL, 0, 0, 0, 0) == ErcNoSuchSvc,
+	      "unknown service accepted");
+	CHECK(Respond(12345, 0) == ErcNotRqBlk, "Respond with a bogus handle accepted");
+	CHECK(Request("NUMBERS ", 0, resp, &h, 0, NULL, 0, NULL, 0, 0, 0, 0) == ErcOk &&
+	      WaitMsg(resp, m) == ErcOk, "shutdown request");
+	CHECK(Request("NUMBERS ", 1, resp, &h, 0, NULL, 0, NULL, 0, 0, 0, 0) == ErcNoSuchSvc,
+	      "service still registered after UnRegisterSvc");
+	DeAllocExch(resp);
+	Sleep(2);
+	msg_get_stats(&s);
+	CHECK(s.rqb_free == m5_base.rqb_free && !s.svc_used, "request blocks or services leaked");
+	kprintf("M5: Request/Respond ok (NUMBERS service; dData0-2 = 7,8,9 intact; error codes)\n");
+}
+
+/* ---- the same across address spaces: client in job 2, service + worker in job 3 ---- */
+
+static U32 up_svc, up_work;
+static volatile bool up_ready, up_done, up_alias_ok, up_alias_gone, up_move_checked;
+
+static void upcase_worker(void *unused)
+{
+	U64 m[2], v;
+
+	(void)unused;
+	for (;;) {
+		struct RqBlk *r;
+		U8 *alias;
+		U64 i, pa_alias, pa_orig;
+
+		if (WaitMsg(up_work, m))
+			return;
+		if (m[0] == 0xDEAD)			/* plain message from the service: quit */
+			return;
+		r = (struct RqBlk *)(uintptr_t)m[0];
+		alias = r->pData1;
+		up_alias_ok = r->svc_job == 3 &&
+			GetPhyAdd(3, r->pData1, &pa_alias) == ErcOk &&
+			GetPhyAdd(2, r->pOrig1, &pa_orig) == ErcOk && pa_alias == pa_orig;
+		for (i = 0; i < r->cbData1 && i < r->cbData2; i++) {
+			U8 c = r->pData1[i];
+			r->pData2[i] = (c >= 'a' && c <= 'z') ? (U8)(c - 32) : c;
+		}
+		Respond(m[0], ErcOk);
+		up_alias_gone = !probe_read(alias, &v);	/* Respond removed the alias */
+	}
+}
+
+static void upcase_service(void *unused)
+{
+	U64 m[2];
+	U32 kexch = 1;		/* an exchange this job does not own */
+	erc_t e;
+
+	(void)unused;
+	AllocExch(&up_svc);
+	AllocExch(&up_work);
+	task_create("up-work", upcase_worker, NULL, 15, 3, &e);
+	RegisterSvc("UPCASE  ", up_svc);
+	up_ready = true;
+	for (;;) {
+		struct RqBlk *r;
+
+		if (WaitMsg(up_svc, m))
+			continue;
+		r = (struct RqBlk *)(uintptr_t)m[0];
+		if (r->ServiceCode == 0) {
+			UnRegisterSvc("UPCASE  ");
+			SendMsg(up_work, 0xDEAD, 0);
+			Respond(m[0], ErcOk);
+			Sleep(2);
+			DeAllocExch(up_work);
+			DeAllocExch(up_svc);
+			return;
+		}
+		up_move_checked = MoveRequest(m[0], kexch) == ErcNotOwner;
+		MoveRequest(m[0], up_work);		/* the worker answers it */
+	}
+}
+
+static void upcase_client(void *unused)
+{
+	static const char text[] = "doors messaging";
+	U8 *buf;
+	U32 resp;
+	U64 h, m[2];
+
+	(void)unused;
+	if (AllocPage(1, &buf) || AllocExch(&resp))
+		return;
+	memcpy(buf, text, sizeof(text));
+	if (Request("UPCASE  ", 1, resp, &h, 1, buf, sizeof(text), buf + 512, sizeof(text),
+		    0, 0, 0) == ErcOk && WaitMsg(resp, m) == ErcOk && m[1] == ErcOk &&
+	    !memcmp(buf + 512, "DOORS MESSAGING", sizeof(text)))
+		up_done = true;
+	Request("UPCASE  ", 0, resp, &h, 0, NULL, 0, NULL, 0, 0, 0, 0);
+	WaitMsg(resp, m);
+	DeAllocExch(resp);
+}
+
+static void test_cross_job(void)
+{
+	struct addr_space *a = vmm_space_create(2), *b = vmm_space_create(3);
+	struct msg_stats s;
+	erc_t e;
+	U32 waited;
+
+	CHECK(a && b, "vmm_space_create failed");
+	task_create("up-svc", upcase_service, NULL, 15, 3, &e);
+	CHECK(up_ready, "UPCASE service did not start");
+	task_create("up-client", upcase_client, NULL, 18, 2, &e);
+	for (waited = 0; task_count() > 2 && waited < 300; waited++)	/* kmain + idle left */
+		Sleep(1);
+	CHECK(up_done, "cross-job request failed or returned wrong data");
+	CHECK(up_alias_ok, "service did not see the client's buffer through an alias");
+	CHECK(up_move_checked, "MoveRequest to another job's exchange was not refused");
+	CHECK(up_alias_gone, "alias still mapped after Respond");
+	CHECK(task_count() == 2, "tasks left over: %u", task_count());
+
+	vmm_space_destroy(a);
+	vmm_space_destroy(b);
+	msg_get_stats(&s);
+	CHECK(s.exch_free == m5_base.exch_free && s.lb_free == m5_base.lb_free &&
+	      s.rqb_free == m5_base.rqb_free && !s.svc_used && !s.tmr_used,
+	      "messaging objects leaked (exch %u/%u, lb %u/%u, rqb %u/%u, svc %u, tmr %u)",
+	      s.exch_free, m5_base.exch_free, s.lb_free, m5_base.lb_free, s.rqb_free,
+	      m5_base.rqb_free, s.svc_used, s.tmr_used);
+	CHECK(pmm_free_pages() == m5_pages, "pages leaked: %ld", (long)(m5_pages - pmm_free_pages()));
+	kprintf("M5: cross-job Request ok (job 2 client -> job 3 service, buffers aliased, "
+		"MoveRequest to a worker, aliases removed by Respond)\n");
+	kprintf("M5: no leaks (exchanges, link blocks, request blocks, services, timers, pages)\n");
+	kprintf("DOORS: M5 OK\n");
+}
+
 /* Last test: overflow the kernel stack into its guard page. The #PF can't push its frame on
    the dead stack, so the CPU raises #DF, which runs on its own IST stack. */
 
@@ -452,6 +808,14 @@ void selftest_run(void)
 	test_round_robin();
 	test_context();
 	test_task_calls();
+
+	test_exchanges();
+	test_wait_switch();
+	test_ping_pong();
+	test_alarm();
+	test_kbd_messages();
+	test_request();
+	test_cross_job();
 
 	isr_register(8, df_handler);
 	recurse(0);

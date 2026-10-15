@@ -4,7 +4,10 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/msg.h>
 #include <doors/x86.h>
+
+static volatile U32 notify_exch;
 
 #define KBD_DATA 0x60
 
@@ -61,10 +64,20 @@ static void kbd_irq(struct regs *r)
 	if (!c)
 		return;
 
+	if (notify_exch) {		/* a task waits on an exchange: message it (MMURTL style) */
+		ISendMsg(notify_exch, (U8)c, 0);
+		return;
+	}
 	if (((head + 1) % sizeof(buf)) != tail) {	/* drop the key if the buffer is full */
 		buf[head] = c;
 		head = (head + 1) % sizeof(buf);
 	}
+}
+
+/* Deliver keys as messages (key, 0) to this exchange instead of the polling buffer; 0 = off. */
+void kbd_set_exch(U32 exch)
+{
+	notify_exch = exch;
 }
 
 void kbd_init(void)

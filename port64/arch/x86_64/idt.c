@@ -5,6 +5,7 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/task.h>
 #include <doors/x86.h>
 
 struct idt_entry {
@@ -125,6 +126,7 @@ void isr_dispatch(struct regs *r)
 		pic_eoi(irq);
 		if (handlers[v])
 			handlers[v](r);
+		sched_irq_exit();	/* a task the handler woke (ISendMsg) may outrank us */
 		return;
 	}
 
