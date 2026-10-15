@@ -5,3 +5,7 @@ port64/build/
 *.elf
 *.iso
 port64/**/*.img
+
+# Python
+__pycache__/
+*.pyc
