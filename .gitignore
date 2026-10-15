@@ -1,0 +1,6 @@
+# port64 build output
+port64/build/
+*.o
+*.elf
+*.iso
+port64/**/*.img

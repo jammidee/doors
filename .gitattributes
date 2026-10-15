@@ -1,0 +1,9 @@
+# Original MMURTL tree: store byte-for-byte (DOS CRLF text, .EXE/.RUN/.IMG binaries).
+* -text
+
+# New files use LF line endings.
+*.md        text eol=lf
+.git*       text eol=lf
+port64/**   text=auto eol=lf
+port64/**/*.img  binary
+port64/**/*.iso  binary
