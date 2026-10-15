@@ -217,10 +217,27 @@ Steps:
 - **Done when:** DOORS boots from an ext4 root, the CLI copies/renames/deletes files with long names,
   files larger than 4 GB work, and `e2fsck` reports the image clean after the stress test.
 
-### Phase 8 — User land
-- [ ] Port the CM32 libc (`CM32/LIB`) to `port64/libc`, or use a small existing one.
-      Port `fp32` if wanted (fix its hardcoded `c:\cm32\inc` includes).
-- [ ] Monitor (`MONITOR.C`), CLI (`MSAMPLES/CLI`), editor, the other samples.
+### Phase 8 — User land (M9)
+The CLI and editor need about 25 calls that are not ported yet, plus a small C library. Work is split into
+steps, each a release (0.9.x). 1.0.0 = the smoke test passes.
+- [x] **9a: virtual video and keyboard (0.9.0).** Each job gets an 80×25 virtual screen (MMURTL `VIDEO.ASM`):
+      `SetVidOwner`, `GetVidOwner`, `SetNormVid`, `GetNormVid`, `ClrScr`, `TTYOut` (per job, attributes),
+      `PutVidChars`, `PutVidAttrs`, `GetVidChar`, `SetXY`, `GetXY`, `ScrollVid`, `Beep`, `Tone`.
+      Keyboard service as in `KEYBOARD.ASM`: MMURTL key codes (key | shift state << 8 | locks << 16 |
+      numpad << 24), the keyboard follows the video owner, `ReadKbd(pKeyCodeRet, fWait)`
+      (`ErcNoKeyAvail` 700), global keys in a kernel task: Ctrl-Alt-PgDn = next job's screen,
+      Ctrl-Alt-Del = kill the job on screen. Kernel output (`kprintf`) is job 1's screen; everything
+      written to any screen is also copied to COM1 so tests can see it. The monitor gets MMURTL's status
+      line (clock, ticks) and function keys (F1 load CLI, F2 jobs, F3 stats) next to its command line.
+- [ ] **9b: job calls and C library (0.9.1).** `SetPath`/`GetPath`, `SetUserName`/`GetUserName`,
+      `SetExitJob`/`GetExitJob`, `Chain`, `SetSysIn`/`SetSysOut`/`GetSysIn`/`GetSysOut`, `GetCMOSTime`/
+      `GetCMOSDate`; `EditLine` in the user library (it only uses public calls). libc: `sprintf`, string and
+      `ctype` functions, `fopen`/`fgets`/`fclose` over the file calls.
+- [ ] **9c: CLI (0.9.2).** `port64/user/progs/cli.c` from `MSAMPLES/CLI/CLI.C` with as few changes as possible
+      (the original stays untouched); `HELP.CLI` on the system disk.
+- [ ] **9d: editor and samples (0.9.3).** `EDIT.C`, `BUSYLOOP`, `SERVICE`/`TESTSVC`.
+- [ ] **9e: smoke test (1.0.0).** `docs/SMOKE_TEST.md` 64-bit column, scripted like `tools/boot32/smoke.py`.
+      The debugger row (P7) moves to M10 with the debugger itself.
 - [ ] Debugger (`DEBUGGER.ASM`, `UASM.C`): rewrite for 64-bit, with an x86-64 disassembler
       (replace UASM, or embed a small one). Lowest priority. Until then, use the QEMU gdbstub (`-s -S`).
 - **Done when:** everything in `docs/SMOKE_TEST.md` passes on the 64-bit build.

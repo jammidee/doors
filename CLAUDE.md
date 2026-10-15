@@ -154,6 +154,11 @@ make debug    # QEMU waits for gdb on :1234
   (`include/doors/erc.h` holds all error codes). Messages are two U64. Use `ISendMsg` in interrupt handlers and
   `SendMsg` in tasks. A service reads `struct RqBlk` from the handle it receives; its `pData1`/`pData2` are
   already aliased into the service's job.
+- Screens and keyboard (`kernel/video.c`, `kernel/kbdsvc.c`, `drivers/keyboard.c`, `include/doors/video.h`):
+  every job has an 80×25 virtual screen; `kprintf` writes job 1's (row 0 = status line). Video calls act on
+  `current->job`. Keys go to the video owner's 64-key buffer. Use `kbd_inject(code)` to fake keys in self-tests,
+  and `{name}` raw keys (`{f1}`) in `--send`. The old ASCII hooks `kbd_getc`/`kbd_set_exch` exist only for
+  the M2/M5 tests, which run before `kbd_service_start()`.
 - Every task has its own exchange (`GetTSSExch`). `Sleep` = `Alarm` on it + `WaitMsg`, so don't use a task's
   own exchange for other traffic.
 - User programs (`port64/user/`): static ELF64 at 0x40000000, written against `user/lib/doors.h` (MMURTL names).

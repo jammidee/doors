@@ -91,8 +91,12 @@ TEST_ARGS := \
 	--expect "M8: ext4 stress ok" \
 	--expect "M8: LoadNewJob from ext4 ok" \
 	--expect "DOORS: M8 OK" \
+	--expect "vidtest: all video and keyboard calls ok" \
+	--expect "M9: video and keyboard ok" \
 	--send "M2: type doors=doors\n" \
-	--send "M5: type msg=msg\n"
+	--send "M5: type msg=msg\n" \
+	--send "M9: type kbd=kQ{f1}{up}\n" \
+	--send "M9: type edit=hellx{backspace}o\n"
 
 .PHONY: all run console test debug clean FORCE
 

@@ -86,6 +86,15 @@ Every call returns an `erc_t` (32-bit). `0` (`ErcOk`) means success. The codes a
 | 231 | ErcDirFull | directory full |
 | 232 | ErcDirNotEmpty | **DOORS:** `DeleteDir` of a directory that still has entries |
 
+## Video and keyboard
+
+| Code | Name | Meaning |
+|---|---|---|
+| 300 | ErcVidNum | bad video (job) number for `SetVidOwner` |
+| 300 | ErcEditParam | bad length passed to `EditLine` (MMURTL uses the same number) |
+| 301 | ErcVidParam | column, line or count outside the 80×25 screen |
+| 700 | ErcNoKeyAvail | `ReadKbd` without waiting: no key in the buffer |
+
 ## Devices
 
 | Code | Name | Meaning |

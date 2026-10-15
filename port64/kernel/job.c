@@ -9,7 +9,8 @@
      3. its services are unregistered and all its exchanges freed (queued requests are failed,
         waiting tasks woken, timers cancelled);
      4. its address space is destroyed (aliases of other jobs' pages are not freed);
-     5. "Job number N terminated. Error: E" is reported, as MMURTL's Monitor did. */
+     5. its screen and key buffer are dropped (the monitor is shown if it was on screen);
+     6. "Job number N terminated. Error: E" is reported, as MMURTL's Monitor did. */
 
 #include <doors/console.h>
 #include <doors/cpu.h>
@@ -20,6 +21,7 @@
 #include <doors/multiboot2.h>
 #include <doors/string.h>
 #include <doors/task.h>
+#include <doors/video.h>
 #include <doors/x86.h>
 
 static struct job jobs[MAX_JOBS];
@@ -205,6 +207,8 @@ static erc_t start_job(const U8 *img, U64 size, const char *name, U32 nlen, cons
 	memset(&jobs[j], 0, sizeof(jobs[j]));
 	jobs[j].used = true;		/* claimed */
 	irq_restore(f);
+	vid_job_new(j);			/* a blank screen of its own, and an empty key buffer */
+	kbd_job_new(j);
 
 	as = vmm_space_create(j);
 	if (!as) {
@@ -254,6 +258,8 @@ static void job_end(U32 job, erc_t erc)
 		vmm_space_destroy(as);
 	jobs[job].alive = false;
 	jobs[job].exit_erc = erc;
+	vid_job_gone(job);			/* if it was on screen, the monitor (job 1) is shown */
+	kbd_job_gone(job);
 	kprintf("Job number %u terminated. Error: %u\n", job, erc);
 	if (self)
 		task_exit();			/* interrupts stay off; never returns */

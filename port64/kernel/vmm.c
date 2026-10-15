@@ -207,7 +207,7 @@ void vmm_init(void)
 	__asm__ volatile("mov %0, %%cr0" : : "r"(read_cr0() | (1UL << 16)) : "memory");
 	hhdm = HHDM_BASE;
 	pmm_remap();
-	vga_remap();
+	vid_remap();
 
 	kprintf("Paging:  own 4-level tables, PML4 at %lx; RAM direct-mapped at %lx; NX on; "
 		"stack guard at %p\n", kernel_space.pml4, HHDM_BASE, kernel_stack_guard);

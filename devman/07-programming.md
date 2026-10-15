@@ -174,6 +174,27 @@ The client side is in `user/progs/upcli.c` and in [chapter 5](05-messaging.md#ex
 
 ## What is not available yet
 
-Per-job screens (`SetVidOwner`, `PutVidChars`, ...), the keyboard service (`ReadKbd`), `Chain`,
-`SetExitJob`, `EditLine` and the other calls marked "not yet" in [chapter 8](08-system-calls.md)
-return `ErcBadCallGate`. Programs today write text with `TTYOut`/`printf` to the shared console.
+`Chain`, `SetExitJob`, `SetPath` and the other calls marked "not yet" in
+[chapter 8](08-system-calls.md) return `ErcBadCallGate`.
+
+## Screen and keyboard
+
+Each program has its own 80×25 screen. It draws there even when it isn't shown. To be seen and
+to get keys, a program takes the screen, like MMURTL's CLI does:
+
+```c
+U32 job, key;
+
+GetJobNum(&job);
+SetVidOwner(job);                       /* show my screen; keys now come to me */
+ClrScr();
+PutVidChars(30, 0, "My program", 10, BRITEWHITE | BGBLUE);
+SetXY(0, 2);
+printf("Press a key...\n");
+ReadKbd(&key, 1);                       /* wait for one */
+if ((key & 0xFF) == 0x0F)               /* F1 */
+	printf("F1, with%s Shift\n", (key & KBD_SHIFT) ? "" : "out");
+```
+
+When a program ends, its screen disappears and the monitor (job 1) is shown again if the program was
+on screen. Everything written with `TTYOut`/`printf` is also copied to the serial log.

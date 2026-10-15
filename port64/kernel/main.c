@@ -34,7 +34,7 @@ static void banner(void)
 	static const char title[] = " DOORS " DOORS_VERSION
 		" (x86-64)  Message-based multitasking real-time kernel";
 
-	vga_set_title(title);
+	vid_set_title(" DOORS " DOORS_VERSION " (x86-64)  Monitor");
 	serial_write(title);
 	serial_write("\n");
 	kprintf("Version %s, build %s\n", DOORS_VERSION, DOORS_COMMIT);
@@ -112,7 +112,17 @@ static void cmd(const char *line)
 			"run C:\\BIN\\HELLO.ELF  load a program from a file\n"
 			"int3   breakpoint exception (handled, execution continues)\n"
 			"pf     page fault at 0xdead0000 (register dump + panic)\n"
-			"div0   divide error (register dump + panic)\n");
+			"div0   divide error (register dump + panic)\n"
+			"screen N  show job N's screen (SetVidOwner)\n"
+			"Keys: F1 load the CLI, F2 jobs, F3 stats, Ctrl-Alt-PgDn next screen,\n"
+			"      Ctrl-Alt-Del kill the job on screen\n");
+	} else if (!strncmp(line, "screen ", 7)) {
+		U32 j = 0;
+		const char *q = line + 7;
+
+		while (*q >= '0' && *q <= '9')
+			j = j * 10 + (U32)(*q++ - '0');
+		kprintf("SetVidOwner(%u): %u\n", j, SetVidOwner(j));
 	} else if (!strcmp(line, "ver")) {
 		kprintf("DOORS %s (x86-64), build %s\n", DOORS_VERSION, DOORS_COMMIT);
 	} else if (!strcmp(line, "ticks")) {
@@ -241,35 +251,47 @@ static void breakpoint(struct regs *r)
 	kprintf("Breakpoint at RIP=%016lx\n", r->rip);
 }
 
+/* A function key runs a command (MMURTL's Monitor: F1 LdCLI, F2 Jobs, F3 Stats), then the
+   prompt and the half-typed line are shown again. */
+static void fkey(const char *command, const char *line, U32 n)
+{
+	kprintf("\n");
+	cmd(command);
+	kprintf("> %.*s", (int)n, line);
+}
+
 static NORETURN void interactive(void)
 {
 	char line[64];
-	U32 n = 0, kexch;
-	U64 msg[2];
+	U32 n = 0, key;
 
 	isr_register(3, breakpoint);
-	if (AllocExch(&kexch))
-		panic("no exchange for the keyboard");
-	kbd_set_exch(kexch);		/* keys arrive as messages; WaitMsg blocks until one does */
-	kprintf("Type 'help' for commands. Keys are echoed.\n> ");
+	/* the keyboard service already runs (kmain): keys go to the job on screen, now job 1 */
+	kprintf("Type 'help' for commands. F1 CLI, F2 jobs, F3 stats, Ctrl-Alt-PgDn next screen.\n> ");
 	for (;;) {
-		int c;
+		U8 c;
 
-		if (WaitMsg(kexch, msg))
+		if (ReadKbd(&key, 1))
 			continue;
-		c = (int)msg[0];
-		if (c == '\n') {
+		c = key & 0x7F;
+		if (c == 0x0D) {
 			console_putc('\n');
 			line[n] = '\0';
 			cmd(line);
 			n = 0;
 			kprintf("> ");
-		} else if (c == '\b') {
+		} else if (c == 0x08) {
 			if (n) {
 				n--;
 				console_write("\b \b");
 			}
-		} else if (n < sizeof(line) - 1 && c >= ' ') {
+		} else if (c == 0x0F) {
+			fkey("run cli", line, n);
+		} else if (c == 0x10) {
+			fkey("jobs", line, n);
+		} else if (c == 0x11) {
+			fkey("tasks", line, n);
+		} else if (n < sizeof(line) - 1 && c >= ' ' && c <= '~') {
 			line[n++] = (char)c;
 			console_putc((char)c);
 		}
@@ -279,7 +301,7 @@ static NORETURN void interactive(void)
 void kmain(U32 magic, U64 mbi_phys)
 {
 	serial_init();
-	vga_init();
+	vid_init();
 	banner();
 
 	if (magic != MB2_BOOTLOADER_MAGIC)
@@ -308,9 +330,11 @@ void kmain(U32 magic, U64 mbi_phys)
 	ata_init();
 	vol_init();
 	fsys_init();
+	vid_clock_base(unix_time());	/* the status line clock counts from here */
 
 	if (test_mode)
 		selftest_run();
+	kbd_service_start();		/* before INITIAL.JOB: its programs may read the keyboard */
 	kprintf("Boot modules: %u\n", boot_info.nmods);
 	job_load_initial();	/* programs listed in INITIAL.JOB, as MMURTL's Monitor did */
 	interactive();

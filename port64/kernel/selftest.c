@@ -1001,7 +1001,8 @@ static void test_disk(void)
 	scratch = d->nblocks - 8;			/* unpartitioned space at the end */
 	for (i = 0; i < 1024; i++)
 		fbuf[i] = (U8)(i ^ 0x5A);
-	CHECK(DeviceOp(DEV_HD0, CmdWrite, scratch, 2, fbuf) == ErcOk, "DeviceOp write");
+	n = (U32)DeviceOp(DEV_HD0, CmdWrite, scratch, 2, fbuf);
+	CHECK(n == ErcOk, "DeviceOp write: erc %u", n);
 	memset(fbuf2, 0, 1024);
 	CHECK(DeviceOp(DEV_HD0, CmdRead, scratch, 2, fbuf2) == ErcOk && !memcmp(fbuf, fbuf2, 1024),
 	      "DeviceOp read back");
@@ -1469,6 +1470,53 @@ static void test_ext4_stress(void)
 			kprintf("%u %s%s", i ? ops[i] : ops[0] + ops[1], what[i], i < 7 ? ", " : ")\n");
 }
 
+/* ======================================================================== M9 */
+
+#define GLOBAL_KEY(k) (0x1100u | (k))		/* Left Ctrl + Left Alt down (KbdState bits 0 and 4) */
+
+/* M9a: virtual screens and the keyboard service. vidtest checks the calls from ring 3 (and reads
+   the keys the test runner types); here: job 1's screen, the owner rules, the global keys. */
+static void test_video_kbd(void)
+{
+	const struct job *j;
+	U32 job, own, x, y;
+	U8 c, a;
+
+	kbd_service_start();
+	CHECK(GetVidChar(1, 0, &c, &a) == ErcOk && c == 'D' && a == 0x1F, "status line: '%c' %x", c, a);
+	CHECK(GetXY(&x, &y) == ErcOk && y >= 1 && GetVidOwner(&own) == ErcOk && own == 1, "job 1 screen");
+	CHECK(PutVidChars(0, 25, "x", 1, 7) == ErcVidParam && SetVidOwner(2) == ErcVidNum &&
+	      SetVidOwner(99) == ErcVidNum, "video parameter errors");
+
+	job = run("vidtest");
+	j = wait_job(job, 3000);			/* it waits for the keys the runner types */
+	CHECK(!j->alive && j->exit_erc == 0, "vidtest: %s, error %u", j->alive ? "still running" : "ended",
+	      j->exit_erc);
+	CHECK(vid_owner() == 1, "the screen did not go back to job 1 (owner %u)", vid_owner());
+
+	/* Ctrl-Alt-PgDn: next screen. Ctrl-Alt-Del: kill the job on screen, never the OS. */
+	job = run("spinner");
+	Sleep(10);
+	CHECK(SetVidOwner(job) == ErcOk && vid_owner() == job, "SetVidOwner(spinner)");
+	kbd_inject(GLOBAL_KEY(0x0C));
+	Sleep(5);
+	CHECK(vid_owner() == 1, "Ctrl-Alt-PgDn: owner %u, expected 1", vid_owner());
+	kbd_inject(GLOBAL_KEY(0x0C));
+	Sleep(5);
+	CHECK(vid_owner() == job, "Ctrl-Alt-PgDn again: owner %u, expected %u", vid_owner(), job);
+	kbd_inject(GLOBAL_KEY(0x7F));
+	j = wait_job(job, 200);
+	CHECK(!j->alive && j->exit_erc == ErcOpCancel, "Ctrl-Alt-Del did not kill the job on screen");
+	CHECK(vid_owner() == 1, "after Ctrl-Alt-Del: owner %u", vid_owner());
+	kbd_inject(GLOBAL_KEY(0x7F));			/* on job 1's screen: nothing happens */
+	kbd_inject('z');				/* an ordinary key reaches job 1 */
+	Sleep(5);
+	CHECK(ReadKbd(&x, 0) == ErcOk && (x & 0xFF) == 'z' && ReadKbd(&x, 0) == ErcNoKeyAvail,
+	      "key for job 1");
+	kprintf("M9: video and keyboard ok (virtual screens, SetVidOwner, ReadKbd, EditLine, "
+		"Ctrl-Alt-PgDn, Ctrl-Alt-Del)\n");
+}
+
 static void test_ext4_jobs(void)
 {
 	const struct job *j;
@@ -1551,6 +1599,7 @@ void selftest_run(void)
 	test_ext4_write();
 	test_ext4_stress();
 	test_ext4_jobs();
+	test_video_kbd();
 
 	isr_register(8, df_handler);
 	recurse(0);

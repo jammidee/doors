@@ -99,5 +99,6 @@ We'll build it in steps. Each step must start up and work before moving on:
 9. ✅ The modern file system (done: DOORS reads and writes ext4, the disk format Linux uses, with long names, upper- and lower-case names kept apart, and files bigger than 4 GB; Linux's own disk checker finds no damage after DOORS has been hammering the disk with random work)
    - Next: protection against power cuts (the ext4 "journal") and starting DOORS from an ext4 disk
 10. The command line, editor and other programs, then re-check that everything above still works
+   - Done so far: every program has its own screen, the keyboard goes to the program you are looking at, and Ctrl+Alt+PgDn flips between them (Ctrl+Alt+Del stops the program on screen)
 
 *Progress is logged day by day in the `devlogs` folder. The detailed technical plan is in `PLAN.md`.*

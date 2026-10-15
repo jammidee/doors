@@ -61,5 +61,5 @@ Not yet available (see [chapter 11](11-limits.md)):
 - The MMURTL command line interpreter (CLI), editor and other user programs (milestone M9). Today
   the user interface is the kernel's built-in [monitor](03-monitor.md).
 - The ext4 journal, booting from an ext4 system disk (M8b).
-- Per-job video screens, keyboard service, `Chain`, debugger, and other calls that return
-  `ErcBadCallGate` for now.
+- `Chain`, `SetExitJob`, paths, the debugger, and the other calls that still return
+  `ErcBadCallGate`. Per-job screens and the keyboard service are done (0.9.0).

@@ -46,8 +46,8 @@ In WSL, from `port64/`:
 ## What you see at boot
 
 ```
- DOORS 0.8.1 (x86-64)  Message-based multitasking real-time kernel
-Version 0.8.1, build 859f14d
+ DOORS 0.9.0 (x86-64)  Message-based multitasking real-time kernel
+Version 0.9.0, build v0.9.0
 Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines
 Based on MMURTL V1.0 by Richard A. Burgess (public domain)
 
@@ -62,7 +62,7 @@ Volume E: disk 12 part 3, 4 MB, FAT12 DOORS12
 Volume F: disk 12 part 4, 64 MB, ext4 DOORS-EXT4
 Boot modules: 8
 INITIAL.JOB: loaded hello as job 3
-Type 'help' for commands. Keys are echoed.
+Type 'help' for commands. F1 CLI, F2 jobs, F3 stats, Ctrl-Alt-PgDn next screen.
 >
 ```
 

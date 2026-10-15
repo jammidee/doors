@@ -28,6 +28,7 @@ is a failure. The serial log is kept in `build/serial.log`.
 | M6 | the `hello`, `badptr`, `fpu`, `upsvc`/`upcli` programs, `KillJob`, `no leaks` | user mode and jobs |
 | M7 | `disk ok`, `FAT read ok`, `FAT write ok`, loading from a file, `fsuser` in ring 3 | disks and FAT |
 | M8 | `ext4 read ok`, `ext4 write ok`, `ext4 stress ok (seed ...)`, loading from ext4 | ext4 |
+| M9 | `vidtest: all video and keyboard calls ok`, `M9: video and keyboard ok` | virtual screens, `ReadKbd` with keys typed by the runner (`{f1}`, `{up}`, `{backspace}`), `EditLine`, Ctrl-Alt-PgDn/Del |
 
 The expected lines are listed in `TEST_ARGS` in the Makefile (`--expect`). Lines the test runner
 answers with keystrokes are `--send` entries (`"M2: type doors=doors\n"` means: when `M2: type
@@ -57,7 +58,7 @@ file systems are tested against independent implementations.
 
 | Tool | Purpose |
 |---|---|
-| `port64/tools/qemu_test.py` | headless test runner: `--iso`, `--disk`, `--log`, `--expect TEXT` (repeatable), `--send "TRIGGER: type TEXT"`, `--timeout` |
+| `port64/tools/qemu_test.py` | headless test runner: `--iso`, `--disk`, `--log`, `--expect TEXT` (repeatable), `--send "TRIGGER=TEXT"` (`\n` = Enter, `{name}` = a raw QEMU key such as `{f1}`), `--timeout` |
 | `port64/tools/mkdisk.py OUT.img [--hello ELF]` | builds the 4-partition test disk |
 | `port64/tools/check_disk.py DISK.img` | the host-side disk checks |
 | `tools/gen_syscalls.sh` | regenerates `syscalls.def` from MMURTL's `MPUBLICS.ASM` plus the DOORS calls |
@@ -79,7 +80,7 @@ file systems are tested against independent implementations.
 ## Versions and the changelog
 
 The version is in `port64/VERSION`. The build turns it and the git commit into
-`build/gen/doors/version.h`. The kernel prints both at boot (`Version 0.8.1, build 859f14d`), the
+`build/gen/doors/version.h`. The kernel prints both at boot (`Version 0.9.0, build v0.9.0`), the
 GRUB menu shows the version, and the monitor's `ver` command repeats it. A build from a working tree
 with uncommitted changes is marked `-dirty`.
 

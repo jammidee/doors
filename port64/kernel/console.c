@@ -1,5 +1,5 @@
 /* DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. */
-/* Kernel console: every character goes to both the VGA screen and COM1.
+/* Kernel console: every character goes to job 1's screen (kernel/video.c) and to COM1.
    kprintf supports %c %s %d %i %u %x %X %p %%, the l/ll/z length modifiers,
    a field width and the '0' and '-' flags. */
 
@@ -11,7 +11,7 @@
 void console_putc(char c)
 {
 	serial_putc(c);
-	vga_putc(c);
+	vid_kputc(c);
 }
 
 void console_write(const char *s)
@@ -185,7 +185,7 @@ int kprintf(const char *fmt, ...)
 	return n;
 }
 
-/* MMURTL TTYOut for the kernel console (attribute ignored for now). */
+/* Raw text on the kernel console (the monitor's `type`). */
 void console_write_n(const char *s, U64 n)
 {
 	U64 f = irq_save();
@@ -199,7 +199,9 @@ void panic(const char *fmt, ...)
 {
 	va_list ap;
 
-	vga_set_color(WHITE, RED);
+	cli();
+	vid_force_owner(1);			/* the panic must be seen, whatever job is on screen */
+	vid_kattr((RED << 4) | WHITE);
 	console_write("\nDOORS PANIC: ");
 	va_start(ap, fmt);
 	vkprintf(fmt, ap);

@@ -76,8 +76,58 @@ erc_t GetSystemDisk(U8 *pDiskRet);
 /* DOORS: entry dIndex of a directory on any file system; ErcNoMatch past the last one */
 erc_t ReadDir(const char *pPath, U32 cbPath, U32 dIndex, struct dir_entry *pEntryRet);
 
-/* video (MVID.H) */
+/* video (MVID.H): each job has its own 80x25 screen; the video owner's is the one shown */
+#define BLINK      0x80
+#define BLACK      0x00
+#define BLUE       0x01
+#define GREEN      0x02
+#define CYAN       0x03
+#define RED        0x04
+#define MAGENTA    0x05
+#define BROWN      0x06
+#define WHITE      0x07
+#define GRAY       0x08
+#define LTBLUE     0x09
+#define LTGREEN    0x0A
+#define LTCYAN     0x0B
+#define LTRED      0x0C
+#define LTMAGENTA  0x0D
+#define YELLOW     0x0E
+#define BRITEWHITE 0x0F
+#define BGBLACK    0x00
+#define BGBLUE     0x10
+#define BGGREEN    0x20
+#define BGCYAN     0x30
+#define BGRED      0x40
+#define BGMAGENTA  0x50
+#define BGBROWN    0x60
+#define BGWHITE    0x70
+#define ErcVidNum     300
+#define ErcVidParam   301
+#define ErcEditParam  300
+erc_t SetVidOwner(U32 dJobNum);
+erc_t GetVidOwner(U32 *pdVidNumRet);
+erc_t SetNormVid(U32 dAttr);
+erc_t GetNormVid(U32 *pdNormVidRet);
+erc_t ClrScr(void);
 erc_t TTYOut(const char *pTextOut, U64 ddTextOut, U32 ddAttrib);
+erc_t PutVidChars(U32 ddCol, U32 ddLine, const char *pChars, U32 sChars, U32 ddAttrib);
+erc_t PutVidAttrs(U32 ddCol, U32 ddLine, U32 sChars, U32 dAttr);
+erc_t GetVidChar(U32 ddCol, U32 ddLine, U8 *pCharRet, U8 *pAttrRet);
+erc_t SetXY(U32 NewX, U32 NewY);
+erc_t GetXY(U32 *pXRet, U32 *pYRet);
+erc_t ScrollVid(U32 ddULCol, U32 ddULline, U32 nddCols, U32 nddLines, U32 ddfUp);
+erc_t EditLine(U8 *pStr, U32 dCrntLen, U32 dMaxLen, U32 *pdLenRet, U8 *pbExitChar, U32 dEditAttr);
+erc_t Beep(void);
+erc_t Tone(U32 dHz, U32 dTicks10ms);
+
+/* keyboard (MKBD.H): key in bits 0-7, shift state 8-15, locks 16-23, numeric pad bit 24 */
+#define KBD_CTRL   0x0300
+#define KBD_SHIFT  0x0C00
+#define KBD_ALT    0x3000
+#define KBD_NUMPAD 0x01000000
+#define ErcNoKeyAvail 700
+erc_t ReadKbd(U32 *pKeyCodeRet, U32 fWait);
 
 /* MMURTL OS helpers, implemented in the library (no system call needed) */
 void  CopyData(const void *pSource, void *pDestination, U64 dBytes);

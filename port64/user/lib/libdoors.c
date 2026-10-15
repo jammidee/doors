@@ -79,6 +79,65 @@ void ExitJob(erc_t e)
 }
 
 erc_t TTYOut(const char *p, U64 n, U32 attr)	{ return CALL(TTYOut, A(p), n, attr); }
+erc_t SetVidOwner(U32 j)			{ return CALL(SetVidOwner, j); }
+erc_t GetVidOwner(U32 *p)			{ return CALL(GetVidOwner, A(p)); }
+erc_t SetNormVid(U32 a)				{ return CALL(SetNormVid, a); }
+erc_t GetNormVid(U32 *p)			{ return CALL(GetNormVid, A(p)); }
+erc_t ClrScr(void)				{ return (erc_t)doors_syscall(SYS_ClrScr, NULL); }
+erc_t PutVidChars(U32 x, U32 y, const char *p, U32 n, U32 a)
+						{ return CALL(PutVidChars, x, y, A(p), n, a); }
+erc_t PutVidAttrs(U32 x, U32 y, U32 n, U32 a)	{ return CALL(PutVidAttrs, x, y, n, a); }
+erc_t GetVidChar(U32 x, U32 y, U8 *c, U8 *a)	{ return CALL(GetVidChar, x, y, A(c), A(a)); }
+erc_t SetXY(U32 x, U32 y)			{ return CALL(SetXY, x, y); }
+erc_t GetXY(U32 *x, U32 *y)			{ return CALL(GetXY, A(x), A(y)); }
+erc_t ScrollVid(U32 x, U32 y, U32 nx, U32 ny, U32 up)
+						{ return CALL(ScrollVid, x, y, nx, ny, up); }
+erc_t Beep(void)				{ return (erc_t)doors_syscall(SYS_Beep, NULL); }
+erc_t Tone(U32 hz, U32 t)			{ return CALL(Tone, hz, t); }
+erc_t ReadKbd(U32 *p, U32 fWait)		{ return CALL(ReadKbd, A(p), fWait); }
+
+/* EditLine (MMURTL VIDEO.ASM __EditLine): edit pStr in place at the cursor position. Backspace
+   and Left delete the last character, 20h-7Eh are typed in, any other key (Enter, Esc, ...) ends
+   the edit and is returned in *pbExitChar. Lengths are at most 80. The text is shown in
+   dEditAttr while editing and in the normal attribute after. */
+erc_t EditLine(U8 *pStr, U32 dCrntLen, U32 dMaxLen, U32 *pdLenRet, U8 *pbExitChar, U32 dEditAttr)
+{
+	U32 x0, y0, key, norm, i;
+	erc_t erc;
+
+	if (dCrntLen > 80 || dMaxLen > 80 || dCrntLen > dMaxLen)
+		return ErcEditParam;
+	if ((erc = GetXY(&x0, &y0)))
+		return erc;
+	for (i = dCrntLen; i < dMaxLen; i++)
+		pStr[i] = ' ';
+	for (;;) {
+		U8 k;
+
+		if ((erc = SetXY(x0 + dCrntLen, y0)) ||
+		    (erc = PutVidChars(x0, y0, (const char *)pStr, dMaxLen, dEditAttr)))
+			return erc;
+		do {
+			if ((erc = ReadKbd(&key, 1)))
+				return erc;
+			k = key & 0x7F;
+		} while (!k);
+		if (k == 0x08 || k == 0x03) {			/* BackSpace, Left (also Num-Left) */
+			if (dCrntLen)
+				pStr[--dCrntLen] = ' ';
+			continue;
+		}
+		if (k < 0x20 || k > 0x7E)			/* Enter, Esc, function keys... */
+			break;
+		if (dCrntLen < dMaxLen)		/* MMURTL wrote one byte past a full line here */
+			pStr[dCrntLen++] = k;
+	}
+	*pbExitChar = (U8)(key & 0x7F);
+	*pdLenRet = dCrntLen;
+	GetNormVid(&norm);
+	PutVidChars(x0, y0, (const char *)pStr, dMaxLen, norm);
+	return ErcOk;
+}
 
 /* ---- MMURTL helpers in the library ---- */
 

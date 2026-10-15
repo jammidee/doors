@@ -12,6 +12,18 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 0.9.0 — 2026-10-16 — M9 step 9a: screens and keyboard
+- Every job has its own 80×25 virtual screen (MMURTL `VIDEO.ASM`): `SetVidOwner`, `GetVidOwner`,
+  `ClrScr`, `TTYOut` with attributes, `PutVidChars`, `PutVidAttrs`, `GetVidChar`, `SetXY`, `GetXY`,
+  `ScrollVid`, `SetNormVid`, `GetNormVid`, `Beep`, `Tone`; `EditLine` in the user library.
+- Keyboard service as in `KEYBOARD.ASM`: MMURTL key codes with shift/lock state, keys go to the
+  job on screen, `ReadKbd`. Global keys: Ctrl-Alt-PgDn (next screen), Ctrl-Alt-Del (kill the job on
+  screen).
+- Monitor: status line with version, clock and ticks; F1 CLI, F2 jobs, F3 stats; `screen N`.
+- ATA: a cache flush may take up to 30 s (QEMU fsyncs the image on the host; 3 s was sometimes
+  too short).
+- Test runner: `{name}` raw keys in `--send` (`{f1}`, `{up}`, `{backspace}`). New `vidtest` program.
+
 ## 0.8.1 — 2026-10-16
 - Versioning: `port64/VERSION`, version and build commit in the boot banner, GRUB menu and
   monitor `ver` command; this changelog; tags for all earlier milestones.

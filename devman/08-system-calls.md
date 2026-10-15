@@ -106,19 +106,42 @@ All described in [chapter 6](06-file-system.md).
 
 ## Screen and keyboard
 
-| # | Call | Status | Purpose |
+Every job has its own 80×25 virtual screen. The calls act on the caller's job's screen. The
+*video owner* is the job whose screen is shown, and the keyboard goes to it. Columns are 0–79 and
+lines 0–24. Coordinates out of range give `ErcVidParam` (301), and a bad job number gives
+`ErcVidNum` (300). Attributes are MMURTL's colour bytes (`doors.h`: `WHITE`, `BGBLUE`, ...).
+
+| # | Call | Status | Signature / purpose |
 |---|---|---|---|
-| 55 | TTYOut | yes | `TTYOut(const char *pTextOut, U64 ddTextOut, U32 ddAttrib)`: write text to the console |
-| 16 | ReadKbd | not yet | read a key (keyboard service) |
-| 52 / 53 | SetVidOwner / GetVidOwner | not yet | which job owns the screen |
-| 54 | ClrScr | not yet | |
-| 56 | PutVidChars | not yet | |
-| 57 / 58 | SetXY / GetXY | not yet | cursor position |
-| 59 | EditLine | not yet | line editor (CLI) |
-| 76 | ScrollVid | not yet | |
-| 92 / 93 | PutVidAttrs / GetVidChar | not yet | |
-| 94 / 95 | SetNormVid / GetNormVid | not yet | |
-| 28 / 29 | Beep / Tone | not yet | speaker |
+| 55 | TTYOut | yes | `TTYOut(const char *pTextOut, U64 ddTextOut, U32 ddAttrib)`: text at the cursor. LF = next line at column 0, CR = column 0, BS = one left (not erasing), TAB = next multiple of 8 (DOORS). The screen scrolls at the bottom. Text is also copied to COM1 |
+| 56 | PutVidChars | yes | `PutVidChars(U32 ddCol, U32 ddLine, const char *pChars, U32 sChars, U32 ddAttrib)`: characters at a position; the cursor doesn't move |
+| 92 | PutVidAttrs | yes | `PutVidAttrs(U32 ddCol, U32 ddLine, U32 sChars, U32 dAttr)`: change colours only |
+| 93 | GetVidChar | yes | `GetVidChar(U32 ddCol, U32 ddLine, U8 *pCharRet, U8 *pAttrRet)` |
+| 57 / 58 | SetXY / GetXY | yes | `SetXY(U32 NewX, U32 NewY)` / `GetXY(U32 *pXRet, U32 *pYRet)`: cursor position |
+| 76 | ScrollVid | yes | `ScrollVid(U32 ddULCol, U32 ddULline, U32 nddCols, U32 nddLines, U32 ddfUp)`: scroll a rectangle one line up (`ddfUp` ≠ 0) or down |
+| 54 | ClrScr | yes | `ClrScr(void)`: fill with the normal attribute, cursor to 0,0 |
+| 94 / 95 | SetNormVid / GetNormVid | yes | `SetNormVid(U32 dAttr)` / `GetNormVid(U32 *pdNormVidRet)`: the attribute `ClrScr` and `ScrollVid` fill with (default 07h) |
+| 52 / 53 | SetVidOwner / GetVidOwner | yes | `SetVidOwner(U32 dJobNum)` / `GetVidOwner(U32 *pdVidNumRet)`: which job is on screen (job 2 is refused) |
+| 59 | EditLine | lib | `EditLine(U8 *pStr, U32 dCrntLen, U32 dMaxLen, U32 *pdLenRet, U8 *pbExitChar, U32 dEditAttr)`: edit a line (at most 80) at the cursor. Backspace/Left delete, other keys end the edit and are returned in `*pbExitChar`. `ErcEditParam` (300) for bad lengths |
+| 16 | ReadKbd | yes | `ReadKbd(U32 *pKeyCodeRet, U32 fWait)`: the next key for the caller's job. Waits if `fWait`, else `ErcNoKeyAvail` (700). See *Key codes* below |
+| 28 / 29 | Beep / Tone | yes | `Beep(void)`: 800 Hz for 350 ms. `Tone(U32 dHz, U32 dTicks10ms)`: PC speaker (silent in QEMU unless an audio device is attached; the call still takes its time) |
+
+### Key codes
+
+`ReadKbd` returns MMURTL's key codes, translated with the tables of `KEYBOARD.ASM`:
+
+| Bits | Contents |
+|---|---|
+| 0–7 | the key: ASCII 20h–7Eh, or a special code (below) |
+| 8–15 | shift state: Ctrl `0x0300`, Shift `0x0C00`, Alt `0x3000` (`KBD_CTRL`, `KBD_SHIFT`, `KBD_ALT`) |
+| 16–23 | lock state: Scroll 01h, Num 02h, Caps 04h |
+| 24 | the key came from the numeric pad (`KBD_NUMPAD`) |
+
+Special keys: Up 01h, Down 02h, Left 03h, Right 04h, PgUp 05h, Home 06h, Backspace 08h, Tab 09h,
+End 0Bh, PgDn 0Ch, Enter 0Dh, Insert 0Eh, F1–F10 0Fh–18h, F11 19h, F12 1Ah, Esc 1Bh, Delete 7Fh.
+
+Ctrl+Alt+key combinations are **global**: no program receives them. Ctrl-Alt-PgDn shows the next
+job's screen, and Ctrl-Alt-Del kills the job on screen (never job 1).
 
 ## Devices, interrupts and ports
 

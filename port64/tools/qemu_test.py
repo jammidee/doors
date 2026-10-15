@@ -42,13 +42,28 @@ def monitor(sock_path, cmd):
     s.close()
 
 
+def send_keys(text):
+    """Text to QEMU sendkey names; {name} is a raw key, e.g. {f1}, {up}, {backspace}, {ctrl-alt-delete}."""
+    keys = []
+    while text:
+        i = text.find("{")
+        j = text.find("}", i)
+        if i < 0 or j < 0:
+            keys += text_keys(text)
+            break
+        keys += text_keys(text[:i]) + [text[i + 1:j]]
+        text = text[j + 1:]
+    return keys
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--iso", required=True)
     ap.add_argument("--log", required=True)
     ap.add_argument("--expect", action="append", default=[])
     ap.add_argument("--send", action="append", default=[],
-                    help="TRIGGER=TEXT: when TRIGGER appears in the log, type TEXT ('\\n' = Enter)")
+                    help="TRIGGER=TEXT: when TRIGGER appears in the log, type TEXT ('\\n' = Enter, "
+                         "{name} = a raw QEMU key such as {f1} or {backspace})")
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--qemu", default="qemu-system-x86_64")
     ap.add_argument("--disk", help="raw disk image attached as the ATA primary master")
@@ -85,7 +100,7 @@ def main():
         log = read(live)
         for s in sends:
             if not s[2] and s[0] in log and os.path.exists(sock):
-                for k in text_keys(s[1]):
+                for k in send_keys(s[1]):
                     monitor(sock, "sendkey " + k)
                 s[2] = True
         time.sleep(0.2)

@@ -2,9 +2,23 @@
 # 3. The monitor
 
 Until the MMURTL CLI is ported (milestone M9), DOORS has a small command line built into the
-kernel (`port64/kernel/main.c`). It runs as a kernel task at priority 20, reads the keyboard and
-prints to the screen and the serial port. Type a command and press **Enter**. **Backspace**
-corrects the line.
+kernel (`port64/kernel/main.c`). It runs as a kernel task at priority 20 and uses job 1's
+screen. Its top line shows the version, the clock and the tick counter, as MMURTL's Monitor did.
+Type a command and press **Enter**. **Backspace** corrects the line.
+
+## Keys
+
+| Key | What it does |
+|---|---|
+| **F1** | load the CLI (`run cli`) |
+| **F2** | list the jobs (`jobs`) |
+| **F3** | tasks and resource statistics (`tasks`) |
+| **Ctrl-Alt-PgDn** | show the next job's screen. Keys go to the job on screen. Press it again to get back to the monitor |
+| **Ctrl-Alt-Del** | kill the job on screen (the monitor itself can't be killed) |
+
+Every program has its own screen. A program started with `run` draws on its own screen, so its
+output doesn't appear on the monitor's. Use Ctrl-Alt-PgDn or `screen N` to look at it. The serial
+log (`build/serial-run.log` with `doors.bat`) gets every program's text.
 
 ## Commands
 
@@ -20,6 +34,7 @@ corrects the line.
 | `run C:\PATH\FILE.ELF` | loads a program from a file on any volume (for example `run F:\BIN\HELLO.ELF`) |
 | `jobs` | every job (number, name, running or ended with its error code, task count) and the list of boot modules |
 | `kill N` | ends job `N` (`KillJob`) |
+| `screen N` | shows job `N`'s screen (`SetVidOwner`) |
 | `vols` | the volumes: letter, disk, partition, size, type and label |
 | `dir C:\PATH` | lists a directory on any volume (FAT or ext4): date and time, `<DIR>`, size, name |
 | `type C:\FILE` | prints a file |

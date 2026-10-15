@@ -130,8 +130,22 @@ for an empty call gate.
 |---|---|
 | 0–31 | CPU exceptions. Double fault and NMI run on their own stacks (IST) |
 | 32 (IRQ 0) | PIT timer, 100 Hz: ticks, sleeping tasks, time slices |
-| 33 (IRQ 1) | PS/2 keyboard: keys are sent as messages (`ISendMsg`) to the exchange of the task that reads the keyboard |
+| 33 (IRQ 1) | PS/2 keyboard: each key is translated to a MMURTL key code and sent (`ISendMsg`) to the keyboard service task, which handles Ctrl-Alt keys and queues the rest for the job on screen |
 | 32–47 | the remaining legacy PIC interrupts |
+
+## Screens and keyboard
+
+Every job has an 80×25 virtual screen (`kernel/video.c`, as MMURTL's `VIDEO.ASM`). Writes go into
+the job's own buffer, and also into VGA memory if the job is the **video owner**. `SetVidOwner` copies
+the new owner's buffer to the screen. Job 1's screen is the kernel console (`kprintf`), with a status
+line in row 0. A panic always switches to job 1's screen.
+
+The keyboard service (`kernel/kbdsvc.c`, as `KEYBOARD.ASM`) is a kernel task at priority 1. It puts
+each key into a 64-key buffer of the job that owns the screen. `ReadKbd` takes keys from the caller's
+own job's buffer, so a program only gets keys typed while its screen was shown. Ctrl+Alt keys are
+global: Ctrl-Alt-PgDn shows the next job, Ctrl-Alt-Del kills the job on screen.
+
+## Disks
 
 The ATA driver (`drivers/ata.c`) uses PIO with LBA48 addressing. Disks are device numbers 12–15
 (primary/secondary, master/slave), as MMURTL numbered its hard disks. Sectors pass through a

@@ -41,6 +41,8 @@
 #define CMD_IDENTIFY      0xEC
 
 #define TIMEOUT_TICKS 300	/* 3 s */
+#define FLUSH_TICKS   3000	/* 30 s: a cache flush may take that long (ATA spec); in QEMU it is an
+				   fsync of the image file on the host */
 
 struct channel {
 	U16 base, ctrl;
@@ -67,9 +69,9 @@ static void delay400(struct channel *c)
 }
 
 /* Wait until BSY is clear, then for `want` bits (DRQ) unless the drive reports an error. */
-static erc_t wait(struct channel *c, U8 want)
+static erc_t wait_t(struct channel *c, U8 want, U64 timeout)
 {
-	U64 end = timer_ticks() + TIMEOUT_TICKS;
+	U64 end = timer_ticks() + timeout;
 	U8 st;
 
 	for (;;) {
@@ -83,6 +85,11 @@ static erc_t wait(struct channel *c, U8 want)
 		if (timer_ticks() > end)
 			return ErcDevTimeOut;
 	}
+}
+
+static erc_t wait(struct channel *c, U8 want)
+{
+	return wait_t(c, want, TIMEOUT_TICKS);
 }
 
 static void select(struct ata *a, U64 lba, U32 n)
@@ -139,7 +146,7 @@ static erc_t xfer(struct ata *a, U32 op, U64 lba, U32 n, U8 *buf)
 	if (op == CmdWrite) {
 		outb(c->base + REG_CMD, a->lba48 ? CMD_FLUSH_EXT : CMD_FLUSH);
 		delay400(c);
-		if ((erc = wait(c, 0)))
+		if ((erc = wait_t(c, 0, FLUSH_TICKS)))
 			return erc;
 	}
 	return ErcOk;

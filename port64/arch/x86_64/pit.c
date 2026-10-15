@@ -18,7 +18,7 @@ static void timer_irq(struct regs *r)
 	(void)r;
 	ticks++;
 	if (ticks % 10 == 0)
-		vga_status_tick(ticks);
+		vid_status_tick(ticks);
 	sched_tick();		/* wake sleepers, time slicing; may switch tasks */
 }
 

@@ -219,15 +219,83 @@ U64 syscall_dispatch(U64 n, U64 uargs)
 	case SYS_TTYOut:
 		ARGS(3);
 		while (a[1]) {
-			U64 k = a[1] < sizeof(name) ? a[1] : sizeof(name);
+			U64 k = a[1] < sizeof(name) ? a[1] : sizeof(name), i;
 
 			if ((erc = copy_in(name, a[0], k)))
 				return erc;
-			console_write_n(name, k);
+			TTYOut(name, k, (U32)a[2]);
+			for (i = 0; i < k; i++)		/* every job's text also goes to COM1 (test logs) */
+				serial_putc(name[i]);
 			a[0] += k;
 			a[1] -= k;
 		}
 		return ErcOk;
+	case SYS_PutVidChars: {
+		char line[VID_COLS * VID_ROWS];
+
+		ARGS(5);
+		if (a[3] > sizeof(line))
+			return ErcVidParam;
+		if ((erc = copy_in(line, a[2], a[3])))
+			return erc;
+		return PutVidChars((U32)a[0], (U32)a[1], line, (U32)a[3], (U32)a[4]);
+	}
+	case SYS_PutVidAttrs:
+		ARGS(4);
+		return PutVidAttrs((U32)a[0], (U32)a[1], (U32)a[2], (U32)a[3]);
+	case SYS_GetVidChar: {
+		U8 c, at;
+
+		ARGS(4);
+		if ((erc = GetVidChar((U32)a[0], (U32)a[1], &c, &at)))
+			return erc;
+		if ((erc = copy_out(a[2], &c, 1)))
+			return erc;
+		return copy_out(a[3], &at, 1);
+	}
+	case SYS_SetVidOwner:
+		ARGS(1);
+		return SetVidOwner((U32)a[0]);
+	case SYS_GetVidOwner:
+		ARGS(1);
+		GetVidOwner(&v32);
+		return out_u32(a[0], v32);
+	case SYS_SetNormVid:
+		ARGS(1);
+		return SetNormVid((U32)a[0]);
+	case SYS_GetNormVid:
+		ARGS(1);
+		GetNormVid(&v32);
+		return out_u32(a[0], v32);
+	case SYS_ClrScr:
+		return ClrScr();
+	case SYS_SetXY:
+		ARGS(2);
+		return SetXY((U32)a[0], (U32)a[1]);
+	case SYS_GetXY: {
+		U32 x, y;
+
+		ARGS(2);
+		GetXY(&x, &y);
+		if ((erc = out_u32(a[0], x)))
+			return erc;
+		return out_u32(a[1], y);
+	}
+	case SYS_ScrollVid:
+		ARGS(5);
+		return ScrollVid((U32)a[0], (U32)a[1], (U32)a[2], (U32)a[3], (U32)a[4]);
+	case SYS_Beep:
+		return Beep();
+	case SYS_Tone:
+		ARGS(2);
+		return Tone((U32)a[0], (U32)a[1]);
+	case SYS_ReadKbd:
+		ARGS(2);
+		if (!urange(a[0], 4))			/* check before blocking */
+			return a[0] ? ErcBadLinAdd : ErcNullPtr;
+		if ((erc = ReadKbd(&v32, (U32)a[1])))
+			return erc;
+		return out_u32(a[0], v32);
 	case SYS_GetJobNum:
 		ARGS(1);
 		return out_u32(a[0], current->job);

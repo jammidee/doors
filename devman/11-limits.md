@@ -31,7 +31,9 @@
 | Area | State | Planned |
 |---|---|---|
 | CLI, editor, sample programs | not ported. The kernel monitor is the user interface | M9 |
-| Per-job screens, keyboard service, `Chain`, `SetExitJob`, redirection | `ErcBadCallGate` | M9 |
+| `Chain`, `SetExitJob`, paths, user name, redirection | `ErcBadCallGate` | M9 (9b) |
+| Keyboard LEDs (Caps/Num/Scroll Lock lights) | not driven; the lock states work | later |
+| Global key requests from programs (MMURTL's debugger keys) | only Ctrl-Alt-PgDn and Ctrl-Alt-Del are handled | M10 |
 | ext4 journal | no journal. A volume that needs recovery mounts read-only | M8b |
 | ext4 htree directory writes, deep extent trees on write | `ErcNotSupported` | M8b |
 | Booting from an ext4 system disk | programs come from the boot image or a path | M8b/M9 |
