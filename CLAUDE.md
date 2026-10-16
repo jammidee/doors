@@ -75,6 +75,7 @@ make console  # the DOORS screen drawn in the terminal (QEMU -display curses); `
               #   this from Windows. WSL's QEMU has no GTK/SDL module, so `make run` has no window unless
               #   qemu-system-gui is installed. Quit curses with Alt+2, then `quit`.
 make smoke    # docs/SMOKE_TEST.md on 64-bit (tools/smoke64.py): types into the CLIs, reads the screen; ~1.5 min
+make powercut # kills QEMU during journaled ext4 writes (tools/powercut.py), checks Linux and DOORS replay; ~2 min
 make test     # headless (tools/qemu_test.py); passes if the serial log has every --expect line in TEST_ARGS and the kernel
               #   exits QEMU via isa-debug-exit (status 33). Kernel cmdline "test" enables the exit.
 make debug    # QEMU waits for gdb on :1234
@@ -172,6 +173,11 @@ make debug    # QEMU waits for gdb on :1234
   `urange`/`copy_in`/`copy_out`) and a stub in `libdoors.c`. Never edit `syscalls.def` by hand; it is generated.
   MMURTL's calls are 0–109. A DOORS-only call goes at the end of the list in `tools/gen_syscalls.sh`
   (`ReadDir` = 110) and is never renumbered.
+- ext4 journal (`kernel/ext4.c`, "journal" section): in ext4.c, write **metadata** with `mwr()`/`secwr()`
+  (they go into the running transaction) and **file data** with `bwr()` (direct, ordered mode); read with
+  `brd()`/`secrd()`, which see the transaction. A new modifying `fs_ops` entry must be wrapped in
+  `tx_begin`/`tx_end` like `j_create`. Never write the superblock directly while mounted (the power-cut test
+  tore it); `ext4_unmount()` clears needs_recovery. Run `make powercut` after touching any of this.
 - MMURTL ports (`MMURTL_PORTS` in the Makefile: cli, edit, busyloop, service, testsvc) are copies of the
   MSAMPLES sources with the changes listed in each header; they compile with `-Wno-pointer-sign` and a few
   other relaxed warnings. File handles are 1..128 (0 = "no file" in MMURTL code). The kernel's `"KEYBOARD"`

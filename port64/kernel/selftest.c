@@ -1196,6 +1196,10 @@ static void test_ext4_read(void)
 	CHECK(read_all(S("F:/deep/dir/tree/FILE.TXT"), fbuf, sizeof(fbuf)) == 22 &&
 	      !memcmp(fbuf, "Deep in an ext4 tree.\n", 22), "ext4 nested directories");
 	CHECK(read_all(S("F:\\MixedCase.Txt"), fbuf, sizeof(fbuf)) == 13, "exact-case name");
+	/* mkdisk left a committed Linux journal transaction (debugfs) that rewrites JOURNAL.TXT:
+	   the mount replayed it */
+	CHECK(read_all(S("F:\\JOURNAL.TXT"), fbuf, sizeof(fbuf)) == 14 && !memcmp(fbuf, "after replay!\n", 14),
+	      "F:\\JOURNAL.TXT: the journal was not replayed ('%.13s')", fbuf);
 	CHECK(OpenFile(S("F:\\mixedcase.txt"), ModeRead, 1, &h) == ErcNoSuchFile,
 	      "ext4 names must be case-sensitive");
 	CHECK(OpenFile(S("F:\\BIG.BIN"), ModeRead, 1, &h) == ErcOk, "open BIG.BIN");
@@ -1702,6 +1706,7 @@ void selftest_run(void)
 	test_cli();
 	test_samples();
 
+	ext4_unmount();				/* the disk is checked by tools/check_disk.py next */
 	isr_register(8, df_handler);
 	recurse(0);
 	panic("stack overflow did not fault");

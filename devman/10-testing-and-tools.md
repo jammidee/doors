@@ -68,10 +68,29 @@ Ctrl-Alt-Del, `monitor` and `exit`. It ends with `PASS n  FAIL n  DEFERRED n` an
 failure. `--only F5,P2` runs just those rows (plus boot and LdCLI); `--keep` leaves the VM running.
 It takes about 1.5 minutes. 1.0.0: 24 PASS, 1 DEFERRED (the debugger, M10).
 
+## `make powercut`: power cuts during ext4 writes
+
+`make powercut` (`port64/tools/powercut.py`) tests the ext4 journal. Each run builds a fresh disk
+and boots DOORS with the kernel command line `powercut`. DOORS then writes, rewrites, renames
+and deletes files in `F:\PC` forever, printing `PC: op N done` after each operation
+(`kernel/powercut.c`). The script kills QEMU (SIGKILL) at a random point. Run 0 boots
+`powercut stop=60` instead, which halts inside the 60th journal commit, after the transaction is in
+the journal and before its blocks are in place, so a replay is certain. After each cut:
+
+1. **Linux** replays the journal on a copy (`e2fsck -fy`). `e2fsck -fn` must then be clean, and
+   `debugfs` must show every file exactly as the operation model says after the last `done`
+   operation. Only the files of the operation in progress may be either way.
+2. **DOORS** boots with `pccheck` on the same disk. The mount replays the journal, DOORS reads every
+   file, and it exits cleanly. Then `e2fsck -fn` must be clean **without any repair**, and the model
+   must hold again.
+
+`--runs N` (default 5) and `--seed S` choose the runs. It ends with `POWERCUT PASS`.
+
 ## Tools
 
 | Tool | Purpose |
 |---|---|
+| `port64/tools/powercut.py` | the power-cut test (`make powercut`) |
 | `port64/tools/smoke64.py` | the 64-bit smoke test (`make smoke`) |
 | `port64/tools/qemu_test.py` | headless test runner: `--iso`, `--disk`, `--log`, `--expect TEXT` (repeatable), `--send "TRIGGER=TEXT"` (`\n` = Enter, `{name}` = a raw QEMU key such as `{f1}`), `--timeout` |
 | `port64/tools/mkdisk.py OUT.img [--hello ELF]` | builds the 4-partition test disk |

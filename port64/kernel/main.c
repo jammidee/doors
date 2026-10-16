@@ -114,6 +114,7 @@ static void cmd(const char *line)
 			"pf     page fault at 0xdead0000 (register dump + panic)\n"
 			"div0   divide error (register dump + panic)\n"
 			"screen N  show job N's screen (SetVidOwner)\n"
+			"sync   mark the ext4 volumes clean before switching off\n"
 			"Keys: F1 load the CLI, F2 jobs, F3 stats, Ctrl-Alt-PgDn next screen,\n"
 			"      Ctrl-Alt-Del kill the job on screen\n");
 	} else if (!strncmp(line, "screen ", 7)) {
@@ -123,6 +124,9 @@ static void cmd(const char *line)
 		while (*q >= '0' && *q <= '9')
 			j = j * 10 + (U32)(*q++ - '0');
 		kprintf("SetVidOwner(%u): %u\n", j, SetVidOwner(j));
+	} else if (!strcmp(line, "sync")) {
+		ext4_unmount();
+		kprintf("ext4 volumes marked clean (safe to switch off; writing again marks them in use)\n");
 	} else if (!strcmp(line, "ver")) {
 		kprintf("DOORS %s (x86-64), build %s\n", DOORS_VERSION, DOORS_COMMIT);
 	} else if (!strcmp(line, "ticks")) {
@@ -354,6 +358,10 @@ void kmain(U32 magic, U64 mbi_phys)
 
 	if (test_mode)
 		selftest_run();
+	if (cmdline_has(boot_info.cmdline, "powercut"))		/* tools/powercut.py */
+		powercut_run(boot_info.cmdline);
+	if (cmdline_has(boot_info.cmdline, "pccheck"))
+		powercut_check();
 	kbd_service_start();		/* before INITIAL.JOB: its programs may read the keyboard */
 	kprintf("Boot modules: %u\n", boot_info.nmods);
 	job_load_initial();	/* programs listed in INITIAL.JOB, as MMURTL's Monitor did */

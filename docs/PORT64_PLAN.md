@@ -204,8 +204,24 @@ Steps:
       extend, directory insert/delete with the checksum tail, rename/move (fixes `..` and link counts),
       mkdir/rmdir. Limits: extent tree depth ≤ 1 on write, no writes into htree (`dir_index`-flagged)
       directories, no journal. A volume that needs journal recovery mounts read-only.
-- [ ] Journaling (jbd2): replay on mount, then ordered-mode metadata journaling for writes. → M8b
-- [ ] htree directory writes and deeper extent trees on write. → M8b
+- [ ] Journaling (jbd2), M8b, in steps:
+  - [x] **Replay on mount (1.1.0):** scan / revoke / replay passes over the journal (inode 8), the tag
+        formats of every JBD2 feature set (32/64-bit, csum v2/v3), then an empty journal and
+        `needs_recovery` cleared. Test: a transaction written by Linux's `debugfs` (`jo`/`jw`/`jc`) on the
+        test disk is replayed by DOORS.
+  - [x] **Journaled writes (1.1.0):** each modifying file operation is one transaction (ordered mode).
+        Metadata blocks collect in memory (reads see them), file data goes to disk first. `needs_recovery`
+        is set at mount and cleared by `ext4_unmount()` (monitor `sync`, end of tests), as on Linux. Commit:
+        descriptor + blocks + commit block in the journal → journal superblock `s_start` set → blocks to
+        their homes (the superblock too) → `s_start` = 0. The first design wrote the superblock directly
+        around each commit; the power-cut test tore it (two sectors, one checksum), hence the change.
+        Journals with features DOORS doesn't write (checksums v2/v3) are replayed, then the volume is
+        mounted read-only.
+  - [x] **Power-cut test (1.1.0):** `tools/powercut.py` kills QEMU in the middle of journaled writes
+        (also at a fixed point inside a commit); Linux's `e2fsck -fy` must replay DOORS's journal, and
+        DOORS's own replay on the next boot must leave `e2fsck -fn` clean with every completed operation
+        present.
+- [ ] htree directory writes and deeper extent trees on write. → M8b (1.2.0)
 - [~] Image tool: `tools/mkdisk.py` adds an ext4 partition (F:) built with `mkfs.ext4 -d`. An ext4 *system*
       disk holding the `MMSYS` contents, booted from, comes in M8b/M9.
 - [x] Test suite: M8 self-tests (read, write, a 5 GB sparse file, long and case-different names, rename,

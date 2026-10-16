@@ -12,6 +12,20 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.1.0 — 2026-10-16 — M8b: the ext4 journal
+- **Journaled ext4 writes** (JBD2, ordered mode): every modifying file operation is one
+  transaction. Metadata goes through the journal; file data goes to disk first.
+- **Journal replay at mount**: DOORS's own journal, or one Linux left (64-bit, csum v2/v3 tags,
+  revoke records). Journals with checksum features are replayed and the volume mounted read-only.
+- `needs_recovery` is set while mounted (as on Linux); the new monitor command `sync` marks the
+  volumes clean.
+- **Power-cut test** (`make powercut`, `tools/powercut.py`): QEMU killed at random points and inside
+  a commit; Linux's e2fsck replay and DOORS's replay must both leave a clean volume with every
+  finished operation present.
+- The test disk carries a committed but unreplayed Linux journal transaction (`debugfs jw`); DOORS
+  replays it at boot. check_disk verifies that the journal is empty and the volume clean after the
+  tests.
+
 ## 1.0.0 — 2026-10-16 — M9: DOORS on 64-bit matches MMURTL
 - **The smoke test passes on 64-bit** (`make smoke`, `tools/smoke64.py`): 24 rows pass, P7 (the
   debugger) is deferred to M10. Every row that hit a known MMURTL bug on 32-bit (copy, rd, the

@@ -98,7 +98,8 @@ We'll build it in steps. Each step must start up and work before moving on:
 7. ✅ Running real programs, each in its own protected space (done: programs are loaded and started by name, a crashing program is stopped without taking the system down, and DOORS cleans up everything it used)
 8. ✅ Disks and files (done: DOORS reads and writes hard disks with the classic FAT format used by DOS, Windows and USB sticks, long file names included, and can start programs stored on disk)
 9. ✅ The modern file system (done: DOORS reads and writes ext4, the disk format Linux uses, with long names, upper- and lower-case names kept apart, and files bigger than 4 GB; Linux's own disk checker finds no damage after DOORS has been hammering the disk with random work)
-   - Next: protection against power cuts (the ext4 "journal") and starting DOORS from an ext4 disk
+   - Now also safe against power cuts: DOORS keeps a journal (a diary of every change, written before the change), so if the power goes off in the middle of saving, the disk is repaired automatically at the next start and nothing that was finished is lost. This was tested by pulling the virtual plug dozens of times.
+   - Next: starting DOORS from an ext4 disk
 10. ✅ The command line, editor and other programs, then re-check that everything above still works (done: DOORS 1.0.0 passes the same checklist as the 1994 original, and the bugs the original had are fixed)
    - Every program has its own screen, the keyboard goes to the program you are looking at, and Ctrl+Alt+PgDn flips between them (Ctrl+Alt+Del stops the program on screen)
    - The original command line is back: press F1 and type `dir`, `copy`, `type`, `md`, `path` or the name of a program, just as in 1994. Several command lines can run at the same time.

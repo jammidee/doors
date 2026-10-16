@@ -5,6 +5,7 @@
 #   make run        boot in QEMU (window; serial log on this terminal)
 #   make console    boot in QEMU drawn in this terminal (curses); used by doors.bat
 #   make smoke      docs/SMOKE_TEST.md on 64-bit: CLI, editor, samples driven by typed keys (tools/smoke64.py)
+#   make powercut   kill QEMU during journaled ext4 writes, check replay + e2fsck (tools/powercut.py)
 #   make test       boot headless (tools/qemu_test.py); pass if the serial log shows every
 #                   TEST_MARKS string and the kernel exits QEMU through isa-debug-exit
 #   make debug      like run, but QEMU waits for gdb on :1234 (gdb build/kernel.elf -ex 'target remote :1234')
@@ -87,6 +88,7 @@ TEST_ARGS := \
 	--expect "fsuser: all file calls from ring 3 ok" \
 	--expect "M7: file calls from ring 3 ok" \
 	--expect "DOORS: M7 OK" \
+	--expect "ext4 on F: journal replayed: 1 transactions, 1 blocks" \
 	--expect "M8: ext4 read ok" \
 	--expect "M8: ext4 write ok" \
 	--expect "M8: ext4 stress ok" \
@@ -111,7 +113,7 @@ TEST_ARGS := \
 	--send "M9: type ed3=Edited in DOORS{alt-s}{alt-q}" \
 	--send "M9: type cli3=dir C:\T9\nexit\n"
 
-.PHONY: all run console test smoke debug clean FORCE
+.PHONY: all run console test smoke powercut debug clean FORCE
 # Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
 .SECONDARY:
 
@@ -190,6 +192,15 @@ $(ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 $(TEST_ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 	$(call mkiso,$@,test)
 
+# Power-cut test (tools/powercut.py): a writer, a writer that stops inside a journal commit, a checker
+PC_ISOS := $(BUILD)/doors-pc.iso $(BUILD)/doors-pcstop.iso $(BUILD)/doors-pccheck.iso
+$(BUILD)/doors-pc.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
+	$(call mkiso,$@,powercut)
+$(BUILD)/doors-pcstop.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
+	$(call mkiso,$@,powercut stop=60)
+$(BUILD)/doors-pccheck.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
+	$(call mkiso,$@,pccheck)
+
 # Disks: `make run` keeps build/disk.img between runs (delete it for a fresh one); `make test`
 # builds a fresh build/disk-test.img, and tools/check_disk.py checks it with fsck.fat/mtools after.
 DISK      := $(BUILD)/disk.img
@@ -217,6 +228,10 @@ test: $(TEST_ISO) $(USER_ELFS)
 	python3 tools/qemu_test.py --iso $(TEST_ISO) --disk $(TEST_DISK) --log $(BUILD)/serial.log \
 		--timeout $(TEST_TIMEOUT) $(TEST_ARGS)
 	python3 tools/check_disk.py $(TEST_DISK)
+
+# Kill QEMU in the middle of journaled ext4 writes, then check the disk with Linux and DOORS
+powercut: $(PC_ISOS) $(USER_ELFS)
+	python3 tools/powercut.py
 
 # docs/SMOKE_TEST.md on the normal ISO: types into a CLI and reads the screen (tools/smoke64.py)
 smoke: $(ISO) $(USER_ELFS)

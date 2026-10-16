@@ -147,13 +147,32 @@ specification says.
 - After every `make test`, Linux's `e2fsck -fn` checks the volume. Its contents are checked with
   `debugfs`.
 
-### ext4 limits (until milestone M8b)
+### The journal
+
+ext4 volumes made by `mkfs.ext4` have a journal (JBD2), and DOORS uses it as Linux does:
+
+- **Every file operation that changes something is one transaction** (create, delete, rename,
+  write, set size). Metadata, meaning the superblock, group descriptors, bitmaps, inodes, extent
+  and directory blocks, goes into the journal first. File contents are written to their place
+  before that ("ordered" mode, Linux's default).
+- **After a power cut**, the next mount replays the journal. The volume is then consistent, and
+  every operation that had finished is in it. The operation that was running at the cut is either
+  complete or absent. Its file contents may be partly written, as on Linux. `make powercut` tests
+  this by cutting QEMU's power at random points.
+- **A journal Linux left behind** (Linux not shut down cleanly) is replayed too. The boot log
+  then says `ext4 on F: journal replayed: N transactions, M blocks`.
+- **While DOORS runs, the volume is marked "in use"** (`needs_recovery`), as Linux does. The
+  monitor's `sync` command marks it clean. Without `sync`, Linux or the next DOORS mount just finds
+  an empty journal and clears the mark. Nothing is lost either way.
+- Journals that use checksums (JBD2 `csum_v2`/`csum_v3`, made by newer e2fsprogs) are replayed,
+  but DOORS doesn't write them: the volume is mounted read-only. An external journal also means
+  read-only.
+
+### ext4 limits
 
 | Situation | Result |
 |---|---|
-| **No journal.** DOORS writes directly. A power cut during a write can leave the volume needing `e2fsck` | — |
-| The volume's journal needs recovery (Linux was not shut down cleanly) | mounted **read-only** |
-| Unknown read-only features, or old block-mapped (ext2/3-style) volumes | mounted read-only |
+| Unknown read-only features, old block-mapped (ext2/3-style) volumes, a journal with checksum features or an external journal | mounted read-only |
 | Unknown incompatible features (encryption, inline data, ...) | not mounted |
 | Writing to an indexed (htree) directory, as Linux makes for large directories | `ErcNotSupported`. Small directories are plain lists and work |
 | Writing a file whose extent tree is deeper than 1 level (very fragmented, written by Linux) | `ErcNotSupported`. Reading works at any depth |

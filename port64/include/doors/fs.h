@@ -124,4 +124,10 @@ erc_t GetSystemDisk(U8 *pDiskRet);		/* 0 = A, 1 = B, 2 = C ... */
    '.' and '..' are not returned. Past the last entry: ErcNoMatch. */
 erc_t ReadDir(const char *pPath, U32 cbPath, U32 dIndex, struct dir_entry *pEntryRet);
 
+/* power-cut test (kernel/powercut.c): halt inside the K-th journal commit when set */
+extern U32 ext4_commit_stop;
+void  ext4_unmount(void);			/* clear needs_recovery (journal empty): a clean shutdown */
+NORETURN void powercut_run(const char *cmdline);
+NORETURN void powercut_check(void);
+
 #endif

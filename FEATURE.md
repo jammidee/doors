@@ -110,7 +110,8 @@ Every public API name, parameter order and error code above stays the same. Only
 - **A modern native file system: ext4** (extents, 64-bit sizes, large volumes, journaling, checksums).
   *Done in M8:* read/write of volumes made by Linux's default `mkfs.ext4` (64bit, extents, flex_bg,
   metadata_csum), with long case-sensitive names, files over 4 GB, sparse files, rename/move and truncate.
-  It passes a random stress test checked by `e2fsck`. The journal comes in M8b.
+  It passes a random stress test checked by `e2fsck`. *Done in 1.1.0:* the JBD2 journal (ordered mode,
+  replay of DOORS's and Linux's journals), tested by cutting the power mid-write (`make powercut`).
 - A **VFS layer** that runs several file systems side by side. **FAT12/16/32 with long names** stays
   for exchanging files.
 - The same file API, with **files larger than 4 GB**, long/UTF-8 names, a new `ReadDir` call and a

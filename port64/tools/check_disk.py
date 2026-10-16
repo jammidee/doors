@@ -75,6 +75,13 @@ def check_ext4(f4):
     r = subprocess.run(["e2fsck", "-fn", f4], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     check("e2fsck -fn F: ext4: no errors", r.returncode == 0,
           r.stdout.decode(errors="replace").strip().splitlines()[-3:])
+    h = subprocess.run(["dumpe2fs", "-h", f4], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode()
+    seq = re.search(r"Journal sequence:\s+0x([0-9a-f]+)", h)
+    check("F: journal used by DOORS, empty, needs_recovery clear",
+          seq and int(seq.group(1), 16) > 100 and re.search(r"Journal start:\s+0$", h, re.M) and
+          "needs_recovery" not in h, seq.group(0) if seq else "no journal")
+    check("F:\\JOURNAL.TXT = the replayed block (Linux transaction left by mkdisk)",
+          e4cat(f4, "/JOURNAL.TXT") == b"after replay!\n")
     check("F:\\NEW4.BIN = 100000 bytes of pattern 13", e4cat(f4, "/NEW4.BIN") == pat(100000, 13))
     frag = b"".join(bytes([ord("a") + i]) * 4096 + (bytes(4096) if i < 11 else b"") for i in range(12))
     check("F:\\FRAG.BIN = 12 blocks with holes (extent tree)", e4cat(f4, "/FRAG.BIN") == frag)

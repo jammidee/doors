@@ -58,11 +58,12 @@ Finished and covered by automatic tests:
 - User mode: ELF64 programs in ring 3, a system call layer that checks every pointer, ending
   a faulting job without harming the system, job cleanup without leaks.
 - ATA disks, MBR/GPT partitions, a block cache, FAT12/16/32 with long names, and ext4 (read
-  and write, without journal). Both are reached through the MMURTL file API.
+  and write, with the journal: power-cut safe). Both are reached through the MMURTL file API.
 
 Not yet available (see [chapter 11](11-limits.md)):
 
-- The ext4 journal, booting from an ext4 system disk (M8b).
+- htree directory writes, deeper extent trees on write, and booting from an ext4 system disk (M8b).
+  The ext4 journal is done (1.1.0).
 - The debugger and the other calls that still return `ErcBadCallGate`.
 
 Done in M9: per-job screens and the keyboard service (0.9.0), the job calls (`Chain`, exit run

@@ -36,6 +36,8 @@ EXT_HELLO = b"Hello from ext4.\n"
 EXT_LONG = b"A long name on ext4.\n"
 EXT_DEEP = b"Deep in an ext4 tree.\n"
 EXT_CASE = b"case matters\n"
+EXT_JOURNAL_OLD = b"before replay\n"    # F:\JOURNAL.TXT as mkfs writes it ...
+EXT_JOURNAL_NEW = b"after replay!\n"    # ... and as the pending journal transaction rewrites it
 TINY_TXT = b"FAT12 volume E:\n"
 
 
@@ -112,6 +114,7 @@ def main():
             os.makedirs(os.path.join(tree, sub))
         files = {"HELLO.TXT": EXT_HELLO, "A long file name on ext4.txt": EXT_LONG,
                  "deep/dir/tree/FILE.TXT": EXT_DEEP, "MixedCase.Txt": EXT_CASE,
+                 "JOURNAL.TXT": EXT_JOURNAL_OLD,
                  "BIG.BIN": big_bin(300000)}
         if hello:
             files["BIN/HELLO.ELF"] = open(hello, "rb").read()
@@ -124,6 +127,17 @@ def main():
             sp.write(b"B" * 4096)
         run("mkfs.ext4", "-q", "-F", "-T", "default", "-b", "4096", "-I", "256", "-L", PARTS[3][4],
             "-d", tree, f4, str(PARTS[3][1] // 8))
+        # A transaction in the journal that Linux committed but never replayed (as after a crash):
+        # it rewrites JOURNAL.TXT's block, and leaves needs_recovery set. DOORS must replay it.
+        blk = subprocess.run(["debugfs", "-R", "bmap /JOURNAL.TXT 0", f4], check=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode().strip()
+        newblk = os.path.join(tmp, "newblk")
+        with open(newblk, "wb") as nb:
+            nb.write(EXT_JOURNAL_NEW.ljust(4096, b"\0"))
+        cmds = os.path.join(tmp, "jcmds")
+        with open(cmds, "w") as cf:
+            cf.write(f"jo\njw -b {blk} {newblk}\njc\n")
+        run("debugfs", "-w", "-f", cmds, f4, stderr=subprocess.DEVNULL)
 
         mbr = bytearray(SEC)
         for i, (start, n, typ, bits, label) in enumerate(PARTS):
