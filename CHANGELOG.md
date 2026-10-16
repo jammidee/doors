@@ -12,6 +12,13 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.0.0 — 2026-10-16 — M9: DOORS on 64-bit matches MMURTL
+- **The smoke test passes on 64-bit** (`make smoke`, `tools/smoke64.py`): 24 rows pass, P7 (the
+  debugger) is deferred to M10. Every row that hit a known MMURTL bug on 32-bit (copy, rd, the
+  editor's file name, undel, FAT timestamps, dump) now passes.
+- `docs/SMOKE_TEST.md` has the 64-bit column filled in.
+- From here on versions follow semantic versioning: MINOR for features, PATCH for fixes.
+
 ## 0.9.3 — 2026-10-16 — M9 step 9d: editor and samples
 - MMURTL's editor (`MSAMPLES/EDITOR/EDIT.C`) ported as `edit`. The file name is no longer cut
   to 13 characters (smoke test P2b).

@@ -6,7 +6,7 @@ DOORS is a message-based, multitasking, real-time operating system for 64-bit x8
 call names, their parameter order and its error codes, and runs them in long mode with modern disks
 and file systems.
 
-This manual describes **DOORS 0.9.3 (x86-64)**, the system in `port64/`, during milestone M9.
+This manual describes **DOORS 1.0.0 (x86-64)**, the system in `port64/`.
 The version history is in `CHANGELOG.md`.
 
 | Chapter | Contents |

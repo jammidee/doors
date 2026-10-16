@@ -42,7 +42,11 @@ API names, parameter order and error codes are unchanged. Only types are wider: 
 file positions and messages are 64-bit. Calls that DOORS adds are numbered after MMURTL's last
 call (see [chapter 8](08-system-calls.md)).
 
-## Status (milestone M8)
+## Status (1.0.0, milestone M9)
+
+DOORS 1.0.0 passes the same smoke test as MMURTL V1.0 (`docs/SMOKE_TEST.md`, `make smoke`): the
+monitor, several CLIs, the editor and the sample programs work as they did in 1994, and the MMURTL
+bugs that test found are fixed. Only the debugger row is left for M10.
 
 Finished and covered by automatic tests:
 
@@ -61,6 +65,7 @@ Not yet available (see [chapter 11](11-limits.md)):
 - The ext4 journal, booting from an ext4 system disk (M8b).
 - The debugger and the other calls that still return `ErcBadCallGate`.
 
-Done in M9 so far: per-job screens and the keyboard service (0.9.0), the job calls (`Chain`, exit
-run file, paths) and a C library (0.9.1), MMURTL's CLI (0.9.2, see [The CLI](03-monitor.md#the-cli)), and the
-editor and sample programs (0.9.3, see [Programs in C:\DOORS](03-monitor.md#programs-in-cdoors)).
+Done in M9: per-job screens and the keyboard service (0.9.0), the job calls (`Chain`, exit run
+file, paths) and a C library (0.9.1), MMURTL's CLI (0.9.2, see [The CLI](03-monitor.md#the-cli)), the
+editor and sample programs (0.9.3, see [Programs in C:\DOORS](03-monitor.md#programs-in-cdoors)), and the
+64-bit smoke test (1.0.0).

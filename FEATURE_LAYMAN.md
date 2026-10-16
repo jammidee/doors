@@ -99,8 +99,8 @@ We'll build it in steps. Each step must start up and work before moving on:
 8. ✅ Disks and files (done: DOORS reads and writes hard disks with the classic FAT format used by DOS, Windows and USB sticks, long file names included, and can start programs stored on disk)
 9. ✅ The modern file system (done: DOORS reads and writes ext4, the disk format Linux uses, with long names, upper- and lower-case names kept apart, and files bigger than 4 GB; Linux's own disk checker finds no damage after DOORS has been hammering the disk with random work)
    - Next: protection against power cuts (the ext4 "journal") and starting DOORS from an ext4 disk
-10. The command line, editor and other programs, then re-check that everything above still works
-   - Done so far: every program has its own screen, the keyboard goes to the program you are looking at, and Ctrl+Alt+PgDn flips between them (Ctrl+Alt+Del stops the program on screen)
+10. ✅ The command line, editor and other programs, then re-check that everything above still works (done: DOORS 1.0.0 passes the same checklist as the 1994 original, and the bugs the original had are fixed)
+   - Every program has its own screen, the keyboard goes to the program you are looking at, and Ctrl+Alt+PgDn flips between them (Ctrl+Alt+Del stops the program on screen)
    - The original command line is back: press F1 and type `dir`, `copy`, `type`, `md`, `path` or the name of a program, just as in 1994. Several command lines can run at the same time.
    - The original text editor is back too (`edit NOTES.TXT`), and so are the demo programs: one that keeps the processor busy without freezing anything else, and a small "number service" that other programs can ask for numbers.
 

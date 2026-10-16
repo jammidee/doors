@@ -74,6 +74,7 @@ make run      # QEMU window; serial log on the terminal. Add QEMU_EXTRA="-monito
 make console  # the DOORS screen drawn in the terminal (QEMU -display curses); `doors.bat` at the repo root runs
               #   this from Windows. WSL's QEMU has no GTK/SDL module, so `make run` has no window unless
               #   qemu-system-gui is installed. Quit curses with Alt+2, then `quit`.
+make smoke    # docs/SMOKE_TEST.md on 64-bit (tools/smoke64.py): types into the CLIs, reads the screen; ~1.5 min
 make test     # headless (tools/qemu_test.py); passes if the serial log has every --expect line in TEST_ARGS and the kernel
               #   exits QEMU via isa-debug-exit (status 33). Kernel cmdline "test" enables the exit.
 make debug    # QEMU waits for gdb on :1234
@@ -116,7 +117,7 @@ make debug    # QEMU waits for gdb on :1234
 
 ## Versioning
 
-- `port64/VERSION` holds `MAJOR.MINOR.PATCH`. It is `0.M.P` until the port matches MMURTL: `M` = milestone,
+- `port64/VERSION` holds `MAJOR.MINOR.PATCH`. It was `0.M.P` until the port matched MMURTL (`M` = milestone);
   `P` = changes within it. M9 (user land, smoke test passing) = `1.0.0`. After that, semantic versioning.
 - Every commit that changes the system bumps the version, adds a `CHANGELOG.md` entry, and is tagged
   `vX.Y.Z` (annotated). Past milestones are tagged v0.1.0 (M1) … v0.8.0 (M8).

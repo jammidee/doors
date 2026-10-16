@@ -57,10 +57,22 @@ After the kernel has written to the test disk, Linux's own tools check it:
 Because the disk is made by Linux's `mkfs` tools and checked by Linux's `fsck` tools, DOORS's
 file systems are tested against independent implementations.
 
+## `make smoke`: the smoke test
+
+`make smoke` (`port64/tools/smoke64.py`) runs `docs/SMOKE_TEST.md` the way a person would. It
+boots the normal ISO on a fresh disk in a headless QEMU, types into the monitor and the CLIs through
+the QEMU monitor, and reads the text screen. Rows: boot and status line, F1 LdCLI, every CLI file
+command (`dir`, `type`, `md`, `copy`, `ren`, `del`, `rd`, `path`, `dump`), `help`, the editor (also with
+a long path), the NUMBERS service across two CLIs, the monitor's F2/F3, Ctrl-Alt-PgDn, BusyLoop +
+Ctrl-Alt-Del, `monitor` and `exit`. It ends with `PASS n  FAIL n  DEFERRED n` and exits non-zero on a
+failure. `--only F5,P2` runs just those rows (plus boot and LdCLI); `--keep` leaves the VM running.
+It takes about 1.5 minutes. 1.0.0: 24 PASS, 1 DEFERRED (the debugger, M10).
+
 ## Tools
 
 | Tool | Purpose |
 |---|---|
+| `port64/tools/smoke64.py` | the 64-bit smoke test (`make smoke`) |
 | `port64/tools/qemu_test.py` | headless test runner: `--iso`, `--disk`, `--log`, `--expect TEXT` (repeatable), `--send "TRIGGER=TEXT"` (`\n` = Enter, `{name}` = a raw QEMU key such as `{f1}`), `--timeout` |
 | `port64/tools/mkdisk.py OUT.img [--hello ELF]` | builds the 4-partition test disk |
 | `port64/tools/check_disk.py DISK.img` | the host-side disk checks |
@@ -83,10 +95,10 @@ file systems are tested against independent implementations.
 ## Versions and the changelog
 
 The version is in `port64/VERSION`. The build turns it and the git commit into
-`build/gen/doors/version.h`. The kernel prints both at boot (`Version 0.9.0, build v0.9.0`), the
+`build/gen/doors/version.h`. The kernel prints both at boot (`Version 1.0.0, build v1.0.0`), the
 GRUB menu shows the version, and the monitor's `ver` command repeats it. A build from a working tree
 with uncommitted changes is marked `-dirty`.
 
-Versions are `0.M.P` until the port matches MMURTL (M9 will be 1.0.0): `M` is the milestone and
-`P` counts the changes within it. Every release commit updates `port64/VERSION` and `CHANGELOG.md`
-and is tagged `vX.Y.Z` in git.
+Versions were `0.M.P` while the port was being built (`M` = milestone). 1.0.0 is the release that passes
+the smoke test. From there on: MINOR for new features, PATCH for fixes. Every release commit updates
+`port64/VERSION` and `CHANGELOG.md` and is tagged `vX.Y.Z` in git.

@@ -236,7 +236,7 @@ steps, each a release (0.9.x). 1.0.0 = the smoke test passes.
 - [x] **9c: CLI (0.9.2).** `port64/user/progs/cli.c` from `MSAMPLES/CLI/CLI.C` with as few changes as possible
       (the original stays untouched); `HELP.CLI` on the system disk.
 - [x] **9d: editor and samples (0.9.3).** `EDIT.C`, `BUSYLOOP`, `SERVICE`/`TESTSVC`.
-- [ ] **9e: smoke test (1.0.0).** `docs/SMOKE_TEST.md` 64-bit column, scripted like `tools/boot32/smoke.py`.
+- [x] **9e: smoke test (1.0.0).** `docs/SMOKE_TEST.md` 64-bit column, scripted like `tools/boot32/smoke.py`.
       The debugger row (P7) moves to M10 with the debugger itself.
 - [ ] Debugger (`DEBUGGER.ASM`, `UASM.C`): rewrite for 64-bit, with an x86-64 disassembler
       (replace UASM, or embed a small one). Lowest priority. Until then, use the QEMU gdbstub (`-s -S`).

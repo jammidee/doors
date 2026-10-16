@@ -4,6 +4,7 @@
 #   make            build build/kernel.elf and build/doors.iso
 #   make run        boot in QEMU (window; serial log on this terminal)
 #   make console    boot in QEMU drawn in this terminal (curses); used by doors.bat
+#   make smoke      docs/SMOKE_TEST.md on 64-bit: CLI, editor, samples driven by typed keys (tools/smoke64.py)
 #   make test       boot headless (tools/qemu_test.py); pass if the serial log shows every
 #                   TEST_MARKS string and the kernel exits QEMU through isa-debug-exit
 #   make debug      like run, but QEMU waits for gdb on :1234 (gdb build/kernel.elf -ex 'target remote :1234')
@@ -110,7 +111,7 @@ TEST_ARGS := \
 	--send "M9: type ed3=Edited in DOORS{alt-s}{alt-q}" \
 	--send "M9: type cli3=dir C:\T9\nexit\n"
 
-.PHONY: all run console test debug clean FORCE
+.PHONY: all run console test smoke debug clean FORCE
 # Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
 .SECONDARY:
 
@@ -216,6 +217,10 @@ test: $(TEST_ISO) $(USER_ELFS)
 	python3 tools/qemu_test.py --iso $(TEST_ISO) --disk $(TEST_DISK) --log $(BUILD)/serial.log \
 		--timeout $(TEST_TIMEOUT) $(TEST_ARGS)
 	python3 tools/check_disk.py $(TEST_DISK)
+
+# docs/SMOKE_TEST.md on the normal ISO: types into a CLI and reads the screen (tools/smoke64.py)
+smoke: $(ISO) $(USER_ELFS)
+	python3 tools/smoke64.py
 
 clean:
 	rm -rf $(BUILD)

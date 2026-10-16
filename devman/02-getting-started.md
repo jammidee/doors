@@ -46,8 +46,8 @@ In WSL, from `port64/`:
 ## What you see at boot
 
 ```
- DOORS 0.9.0 (x86-64)  Message-based multitasking real-time kernel
-Version 0.9.0, build v0.9.0
+ DOORS 1.0.0 (x86-64)  Message-based multitasking real-time kernel
+Version 1.0.0, build v1.0.0
 Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines
 Based on MMURTL V1.0 by Richard A. Burgess (public domain)
 
