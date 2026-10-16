@@ -58,9 +58,9 @@ Finished and covered by automatic tests:
 
 Not yet available (see [chapter 11](11-limits.md)):
 
-- The MMURTL editor and the other sample programs (milestone M9).
 - The ext4 journal, booting from an ext4 system disk (M8b).
 - The debugger and the other calls that still return `ErcBadCallGate`.
 
 Done in M9 so far: per-job screens and the keyboard service (0.9.0), the job calls (`Chain`, exit
-run file, paths) and a C library (0.9.1), and MMURTL's CLI (0.9.2, see [The CLI](03-monitor.md#the-cli)).
+run file, paths) and a C library (0.9.1), MMURTL's CLI (0.9.2, see [The CLI](03-monitor.md#the-cli)), and the
+editor and sample programs (0.9.3, see [Programs in C:\DOORS](03-monitor.md#programs-in-cdoors)).

@@ -121,6 +121,8 @@ def main():
         check("C:\\MOVEME gone after the move", not exists(c, "MOVEME"))
         check("C:\\USER.TXT written by ring 3", mtype(c, "USER.TXT") == b"written by a ring 3 program\n")
         check("C:\\T9\\H.TXT copied by the CLI", mtype(c, "T9/H.TXT") == HELLO_TXT)
+        check("C:\\T9\\EDITED_BY_DOORS.TXT written by the editor (long name kept)",
+              mtype(c, "T9/EDITED_BY_DOORS.TXT") == b"Edited in DOORS")
         check("C:\\STDIO.TXT gone (renamed and removed by jobtest)",
               not exists(c, "STDIO.TXT") and not exists(c, "STDIO2.TXT"))
         check("C:\\BIG.BIN untouched", mtype(c, "BIG.BIN") == big_bin())

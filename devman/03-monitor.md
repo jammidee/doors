@@ -80,3 +80,39 @@ Job number 4 terminated. Error: 0
   FAT stores local time with no time zone, and it is shown as written.
 - The monitor is a development tool. Its commands call kernel functions directly and are not a
   stable interface. Programs use the system calls of [chapter 8](08-system-calls.md).
+
+## Programs in C:\DOORS
+
+The MMURTL sample programs are ported too (`port64/user/progs/`). Type their name in a CLI:
+
+| Command | Program |
+|---|---|
+| `edit FILE` | MMURTL's text editor (`MSAMPLES/EDITOR/EDIT.C`), see below |
+| `busyloop` | prints the timer tick without ever sleeping: shows that the rest of the system keeps running. End it with Ctrl-Alt-Del (that ends its CLI too) |
+| `service` | the NUMBERS service: registers `"NUMBERS "`, answers each request with the next number, and ends when you press a key on its screen |
+| `testsvc` | a client of NUMBERS: run it in a second CLI while `service` runs in the first |
+| `hello` | DOORS's first user program |
+
+### The editor
+
+`edit FILE` opens a file (up to about 128 KB). If the file doesn't exist, the editor asks to
+create it. The top line shows the column, line, size, file name and INS/OVR. Keys:
+
+| Key | Action |
+|---|---|
+| arrows, PgUp, PgDn, Home | move |
+| Alt+Up / Alt+Down | top / bottom of the screen |
+| Alt+Left / Alt+Right | start / end of the line |
+| Alt+B / Alt+E | beginning / end of the text |
+| Insert | insert or overtype |
+| Backspace, Delete | delete |
+| F3 / F4 / F2 | begin block / end block / unmark |
+| F9 / F10 | move / copy the block to the cursor |
+| Alt+Delete | delete the block |
+| Alt+V | show tabs and other non-text characters |
+| **Alt+S** | save |
+| Alt+C / Alt+O | close the file / open another |
+| **Alt+Q** | quit (asks to save if the text changed) |
+
+DOORS changes: the file name is no longer cut to 13 characters (MMURTL saved `C:\SMOKE\HELLO.TXT` as
+`HELLO`), and the program gets its file name with `GetCmdLine`.

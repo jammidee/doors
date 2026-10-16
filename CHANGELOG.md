@@ -12,6 +12,19 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 0.9.3 — 2026-10-16 — M9 step 9d: editor and samples
+- MMURTL's editor (`MSAMPLES/EDITOR/EDIT.C`) ported as `edit`. The file name is no longer cut
+  to 13 characters (smoke test P2b).
+- Samples ported: BusyLoop, Service (NUMBERS) and TestSvc.
+- The kernel's `"KEYBOARD"` service: code 1 reads a key through a request (what MMURTL's Service
+  sample uses), code 4 is accepted.
+- **Fix:** file handles start at 1. MMURTL programs (the editor) and the CM32 library treat
+  handle 0 as "no file"; DOORS gave 0 to the first open file.
+- Tests: an editor session in the CLI test (create, type, save, quit; the long name is checked on
+  the host), NUMBERS + 2 testsvc clients, BusyLoop + Ctrl-Alt-Del, no pages leaked.
+- `make test`: the test disk uses QEMU `cache=unsafe` (no host fsync per flush; the disk is rebuilt
+  each run), timeout 240 s.
+
 ## 0.9.2 — 2026-10-16 — M9 step 9c: the CLI
 - MMURTL's CLI (`MSAMPLES/CLI/CLI.C` V1.0) ported as `user/progs/cli.c`: Cls, Copy, Del, Dir,
   Dump, Exit, Help, MD, Monitor, Path, RD, Ren, Run, Type, and external commands run with `Chain`

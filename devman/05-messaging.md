@@ -64,6 +64,25 @@ UnRegisterSvc("UPCASE  ");
 The file system (`"FILESYS "`) is such a service. The self-tests also use `"KECHO   "` and
 `"NUMBERS "`.
 
+The kernel's **`"KEYBOARD"`** service is the request interface to the keyboard that MMURTL
+programs used. It is useful when a program wants a key and other messages on the **same**
+exchange (MMURTL's Service sample waits for a client or a key that way):
+
+| Code | Request |
+|---|---|
+| 1 | read a key: `pData1` receives the 4-byte key code (`npSend` 0). `dData0` = 1 waits until a key is typed on the requester's screen; 0 answers `ErcNoKeyAvail` at once if there is none. One waiting request per job |
+| 4 | give the keyboard to job `dData0`. Accepted, but has no effect: in DOORS the keyboard always follows the screen (`SetVidOwner`) |
+
+```c
+U32 key;
+U64 kbd;
+
+Request("KEYBOARD", 1, exch, &kbd, 0, (U8 *)&key, 4, 0, 0, 1, 0, 0);
+WaitMsg(exch, m);
+if (m[0] == kbd)        /* the key arrived (not a client request) */
+	...
+```
+
 ## Request and Respond
 
 A client calls a service with `Request`:

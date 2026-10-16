@@ -171,6 +171,10 @@ make debug    # QEMU waits for gdb on :1234
   `urange`/`copy_in`/`copy_out`) and a stub in `libdoors.c`. Never edit `syscalls.def` by hand; it is generated.
   MMURTL's calls are 0–109. A DOORS-only call goes at the end of the list in `tools/gen_syscalls.sh`
   (`ReadDir` = 110) and is never renumbered.
+- MMURTL ports (`MMURTL_PORTS` in the Makefile: cli, edit, busyloop, service, testsvc) are copies of the
+  MSAMPLES sources with the changes listed in each header; they compile with `-Wno-pointer-sign` and a few
+  other relaxed warnings. File handles are 1..128 (0 = "no file" in MMURTL code). The kernel's `"KEYBOARD"`
+  service (codes 1 and 4, `kernel/kbdsvc.c`) serves MMURTL programs that request keys.
 - System directory `C:\DOORS\` (MMURTL's `\MMSYS\`): mkdisk copies every `build/user/*.elf` (`--progs`) and
   `user/sys/*` (`HELP.CLI`, `COMMANDS.CLI`, `--sys`) there. The CLI is `user/progs/cli.c`, a port of
   `MSAMPLES/CLI/CLI.C` (the original stays untouched; its header lists every change). File names without a

@@ -1555,13 +1555,64 @@ static void test_cli(void)
 	CHECK(job_get(job)->loads == 3, "the CLI did not chain to hello and come back (%u loads)",
 	      job_get(job)->loads);
 	Sleep(50);
+
+	/* the editor (9d): edit a new file with a long path, answer Y to create it, type, Alt-S, Alt-Q */
+	kprintf("M9: type ed1\n");
+	for (i = 0; i < 1000 && job_get(job)->loads < 4; i++)	/* EDIT.ELF */
+		Sleep(1);
+	CHECK(job_get(job)->loads == 4, "the CLI did not start the editor");
+	Sleep(100);
+	kprintf("M9: type ed2\n");				/* Y: create the file */
+	Sleep(100);
+	kprintf("M9: type ed3\n");				/* text, Alt-S, Alt-Q */
+	for (i = 0; i < 1000 && job_get(job)->loads < 5; i++)	/* the CLI again */
+		Sleep(1);
+	CHECK(job_get(job)->loads == 5, "the editor did not return to the CLI");
+	CHECK(read_all(S("C:\\T9\\EDITED_BY_DOORS.TXT"), fbuf, sizeof(fbuf)) == 15 &&
+	      !memcmp(fbuf, "Edited in DOORS", 15), "the editor's file");
+	Sleep(50);
+
 	kprintf("M9: type cli3\n");
 	j = wait_job(job, 1000);
 	CHECK(!j->alive && j->exit_erc == 0, "CLI exit: %s, error %u", j->alive ? "still running" : "ended",
 	      j->exit_erc);
 	CHECK(vid_owner() == 1 && fsys_open_count() == 0, "after the CLI: owner %u, %u files open",
 	      vid_owner(), fsys_open_count());
-	kprintf("M9: CLI ok (md, copy, external command via Chain and the exit run file, dir, exit)\n");
+	kprintf("M9: CLI ok (md, copy, external command via Chain and the exit run file, edit, dir, exit)\n");
+}
+
+/* M9d: the MMURTL samples. NUMBERS (service) waits for a key through the KEYBOARD service and
+   serves two testsvc clients; BusyLoop never sleeps and is killed with Ctrl-Alt-Del. */
+static void test_samples(void)
+{
+	const struct job *j;
+	U32 svc, job, i;
+	U64 pages;
+
+	pages = pmm_free_pages();
+	svc = run("service");
+	Sleep(20);
+	CHECK(SetVidOwner(svc) == ErcOk, "SetVidOwner(service)");
+	for (i = 0; i < 2; i++) {
+		job = run("testsvc");
+		j = wait_job(job, 300);
+		CHECK(!j->alive && j->exit_erc == 0, "testsvc %u: error %u", i, j->exit_erc);
+	}
+	kbd_inject('x');				/* any key ends the service */
+	j = wait_job(svc, 300);
+	CHECK(!j->alive && j->exit_erc == ErcOpCancel, "service: %s, error %u",
+	      j->alive ? "still running" : "ended", j->exit_erc);
+
+	job = run("busyloop");
+	CHECK(SetVidOwner(job) == ErcOk, "SetVidOwner(busyloop)");
+	Sleep(150);					/* it sleeps 1 s, then spins */
+	CHECK(job_get(job)->alive, "busyloop ended by itself");
+	kbd_inject(GLOBAL_KEY(0x7F));			/* Ctrl-Alt-Del */
+	j = wait_job(job, 300);
+	CHECK(!j->alive && j->exit_erc == ErcOpCancel, "Ctrl-Alt-Del did not end busyloop");
+	Sleep(5);
+	CHECK(pmm_free_pages() == pages, "pages leaked by the samples: %ld", (long)(pages - pmm_free_pages()));
+	kprintf("M9: samples ok (NUMBERS service + KEYBOARD service request, testsvc, BusyLoop + Ctrl-Alt-Del)\n");
 }
 
 static void test_ext4_jobs(void)
@@ -1649,6 +1700,7 @@ void selftest_run(void)
 	test_video_kbd();
 	test_job_calls();
 	test_cli();
+	test_samples();
 
 	isr_register(8, df_handler);
 	recurse(0);

@@ -84,7 +84,9 @@ def main():
            "-serial", "file:" + live, "-monitor", f"unix:{sock},server,nowait",
            "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04"]
     if a.disk:
-        cmd += ["-drive", f"file={a.disk},format=raw,if=ide,index=0", "-boot", "d"]
+        # cache=unsafe: the test disk is rebuilt every run, so the host need not fsync each flush
+        # (an fsync of an image on a Windows drive under WSL can take seconds)
+        cmd += ["-drive", f"file={a.disk},format=raw,if=ide,index=0,cache=unsafe", "-boot", "d"]
     q = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     start = time.time()
     rc = None

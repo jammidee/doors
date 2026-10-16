@@ -51,9 +51,10 @@ static bool same(const struct fnode *a, const struct fnode *b)
 	return a->vol == b->vol && a->key == b->key;
 }
 
+/* Handles are 1..nFILES (slot + 1): MMURTL programs and the CM32 library use 0 for "no file". */
 static struct ofile *handle(U32 h, U32 job)
 {
-	return h < nFILES && files[h].used && files[h].job == job ? &files[h] : NULL;
+	return h >= 1 && h <= nFILES && files[h - 1].used && files[h - 1].job == job ? &files[h - 1] : NULL;
 }
 
 static bool is_open(const struct fnode *n, bool *modifier)
@@ -110,7 +111,7 @@ static erc_t do_open(struct RqBlk *r, struct fs_req *q, struct volume *v, const 
 	files[i].lfa = 0;
 	files[i].mode = (U8)q->mode;
 	files[i].stream = q->stream ? 1 : 0;
-	q->out32 = i;
+	q->out32 = i + 1;			/* the handle */
 	return ErcOk;
 }
 

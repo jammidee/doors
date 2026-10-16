@@ -38,7 +38,7 @@ QEMU_BASE := -m 256M -no-reboot -no-shutdown
 QEMU_EXTRA ?=
 # Milestone checks for `make test`: kernel/selftest.c prints these lines, tools/qemu_test.py
 # checks them (--expect) and types into the guest when a trigger line appears (--send).
-TEST_TIMEOUT := 120
+TEST_TIMEOUT := 240
 TEST_ARGS := \
 	--expect "DOORS: M1 OK" \
 	--expect "M2: timer ok" \
@@ -97,12 +97,17 @@ TEST_ARGS := \
 	--expect "M9: job calls ok" \
 	--expect "hello: command line 'hello'" \
 	--expect "M9: CLI ok" \
+	--expect "NUMBERS Service gave out number: 1." \
+	--expect "M9: samples ok" \
 	--send "M2: type doors=doors\n" \
 	--send "M5: type msg=msg\n" \
 	--send "M9: type kbd=kQ{f1}{up}\n" \
 	--send "M9: type edit=hellx{backspace}o\n" \
 	--send "M9: type cli1=md C:\T9\ncopy C:\HELLO.TXT C:\T9\H.TXT\n" \
 	--send "M9: type cli2=hello\n" \
+	--send "M9: type ed1=edit C:\T9\EDITED_BY_DOORS.TXT\n" \
+	--send "M9: type ed2=y" \
+	--send "M9: type ed3=Edited in DOORS{alt-s}{alt-q}" \
 	--send "M9: type cli3=dir C:\T9\nexit\n"
 
 .PHONY: all run console test debug clean FORCE
@@ -155,6 +160,11 @@ $(BUILD)/user/lib/crt0.o: user/lib/crt0.asm
 $(BUILD)/user/%.o: user/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+# Programs ported from MSAMPLES keep their 1990s char / unsigned char mixing (as few changes as possible).
+MMURTL_PORTS := cli edit busyloop service testsvc
+$(MMURTL_PORTS:%=$(BUILD)/user/progs/%.o): USER_CFLAGS += -Wno-pointer-sign -Wno-unused-variable \
+	-Wno-unused-but-set-variable -Wno-misleading-indentation
 
 $(BUILD)/user/%.elf: $(BUILD)/user/progs/%.o $(USER_LIB) user/user.ld
 	$(LD) -nostdlib -T user/user.ld -z max-page-size=0x1000 $(USER_LIB) $< -o $@

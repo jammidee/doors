@@ -71,6 +71,7 @@ A file with the read-only attribute, or a file on a read-only volume, can't be o
 | Sizes | any number of bytes | `dLFA` and the byte count must be multiples of 512 (`ErcBadFileSpec` otherwise) |
 | Wrong call | `ErcBlockFile` | `ErcStreamFile` |
 
+Handles are numbers from 1 to 128 (0 is never a handle; MMURTL programs use it for "no file").
 Handles belong to the job that opened them. Up to 128 files are open at a time in the whole
 system. When a job ends, its files are closed.
 

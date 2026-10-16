@@ -30,7 +30,7 @@
 
 | Area | State | Planned |
 |---|---|---|
-| Editor and the other sample programs | not ported yet; the CLI is (0.9.2) | M9 (9d) |
+| DumbTerm, Print, ScrnPrnt, Beeper samples; CM32 and DASM | not ported (need the serial and parallel ports, or are 32-bit tools) | M10 |
 | `malloc` and `free` | not yet: use `AllocPage` | M9 or later |
 | Redirection of stdin/stdout to files (`SetSysIn`/`SetSysOut`) | the names are stored, nothing is redirected | later |
 | A CPU fault in a program run with `Chain` | ends the whole job; the exit run file (for example the CLI) is not reloaded | later |

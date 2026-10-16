@@ -102,5 +102,6 @@ We'll build it in steps. Each step must start up and work before moving on:
 10. The command line, editor and other programs, then re-check that everything above still works
    - Done so far: every program has its own screen, the keyboard goes to the program you are looking at, and Ctrl+Alt+PgDn flips between them (Ctrl+Alt+Del stops the program on screen)
    - The original command line is back: press F1 and type `dir`, `copy`, `type`, `md`, `path` or the name of a program, just as in 1994. Several command lines can run at the same time.
+   - The original text editor is back too (`edit NOTES.TXT`), and so are the demo programs: one that keeps the processor busy without freezing anything else, and a small "number service" that other programs can ask for numbers.
 
 *Progress is logged day by day in the `devlogs` folder. The detailed technical plan is in `PLAN.md`.*
