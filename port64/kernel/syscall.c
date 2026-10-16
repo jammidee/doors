@@ -511,7 +511,7 @@ U64 syscall_dispatch(U64 n, U64 uargs)
 		ARGS(5);
 		if (a[1] >= MAX_PATH)
 			return ErcBadFileSpec;
-		if ((erc = copy_in(path, a[0], a[1])))
+		if (a[1] && (erc = copy_in(path, a[0], a[1])))	/* empty: the job's path */
 			return erc;
 		if (a[3] < 512 || !urange(a[2], 512))
 			return ErcBadLinAdd;
@@ -523,7 +523,7 @@ U64 syscall_dispatch(U64 n, U64 uargs)
 		ARGS(4);
 		if (a[1] >= MAX_PATH)
 			return ErcBadFileSpec;
-		if ((erc = copy_in(path, a[0], a[1])))
+		if (a[1] && (erc = copy_in(path, a[0], a[1])))	/* empty: the job's path */
 			return erc;
 		if (!urange(a[3], sizeof(struct dir_entry)))
 			return ErcBadLinAdd;

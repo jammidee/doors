@@ -95,10 +95,15 @@ TEST_ARGS := \
 	--expect "M9: video and keyboard ok" \
 	--expect "jobtest: job calls, Chain, exit job and C library ok" \
 	--expect "M9: job calls ok" \
+	--expect "hello: command line 'hello'" \
+	--expect "M9: CLI ok" \
 	--send "M2: type doors=doors\n" \
 	--send "M5: type msg=msg\n" \
 	--send "M9: type kbd=kQ{f1}{up}\n" \
-	--send "M9: type edit=hellx{backspace}o\n"
+	--send "M9: type edit=hellx{backspace}o\n" \
+	--send "M9: type cli1=md C:\T9\ncopy C:\HELLO.TXT C:\T9\H.TXT\n" \
+	--send "M9: type cli2=hello\n" \
+	--send "M9: type cli3=dir C:\T9\nexit\n"
 
 .PHONY: all run console test debug clean FORCE
 # Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
@@ -180,8 +185,9 @@ DISK      := $(BUILD)/disk.img
 TEST_DISK := $(BUILD)/disk-test.img
 QEMU_DISK  = -drive file=$(1),format=raw,if=ide,index=0 -boot d
 
-$(DISK): $(BUILD)/user/hello.elf tools/mkdisk.py
-	python3 tools/mkdisk.py $@ --hello $(BUILD)/user/hello.elf
+MKDISK_ARGS = --hello $(BUILD)/user/hello.elf --progs $(BUILD)/user --sys user/sys
+$(DISK): $(USER_ELFS) $(wildcard user/sys/*) tools/mkdisk.py
+	python3 tools/mkdisk.py $@ $(MKDISK_ARGS)
 
 run: $(ISO) $(DISK)
 	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio $(QEMU_EXTRA)
@@ -196,7 +202,7 @@ debug: $(ISO) $(DISK)
 	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio -s -S $(QEMU_EXTRA)
 
 test: $(TEST_ISO) $(USER_ELFS)
-	python3 tools/mkdisk.py $(TEST_DISK) --hello $(BUILD)/user/hello.elf
+	python3 tools/mkdisk.py $(TEST_DISK) $(MKDISK_ARGS)
 	python3 tools/qemu_test.py --iso $(TEST_ISO) --disk $(TEST_DISK) --log $(BUILD)/serial.log \
 		--timeout $(TEST_TIMEOUT) $(TEST_ARGS)
 	python3 tools/check_disk.py $(TEST_DISK)

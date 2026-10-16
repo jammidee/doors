@@ -1,16 +1,17 @@
 <!-- DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines. -->
 # 3. The monitor
 
-Until the MMURTL CLI is ported (milestone M9), DOORS has a small command line built into the
-kernel (`port64/kernel/main.c`). It runs as a kernel task at priority 20 and uses job 1's
-screen. Its top line shows the version, the clock and the tick counter, as MMURTL's Monitor did.
+DOORS has two command lines: the **monitor**, built into the kernel (`port64/kernel/main.c`), and
+the **CLI**, MMURTL's command line interpreter, a program that F1 starts (see [The CLI](#the-cli)).
+
+The monitor runs as a kernel task at priority 20 and uses job 1's screen. Its top line shows the version, the clock and the tick counter, as MMURTL's Monitor did.
 Type a command and press **Enter**. **Backspace** corrects the line.
 
 ## Keys
 
 | Key | What it does |
 |---|---|
-| **F1** | load the CLI (`run cli`) |
+| **F1** | load the CLI from `C:\DOORS\CLI.ELF` (or the `cli` boot module) and give it the screen, as MMURTL's LdCLI did. See [The CLI](#the-cli) |
 | **F2** | list the jobs (`jobs`) |
 | **F3** | tasks and resource statistics (`tasks`) |
 | **Ctrl-Alt-PgDn** | show the next job's screen. Keys go to the job on screen. Press it again to get back to the monitor |
@@ -72,7 +73,8 @@ Job number 4 terminated. Error: 0
 
 ## Notes
 
-- Paths always start with a drive letter. FAT names ignore case (`dir C:\dir1` works).
+- In the monitor, paths always start with a drive letter (job 1 has no path). FAT names ignore
+  case (`dir C:\dir1` works).
   ext4 names are case-sensitive (`F:\MixedCase.Txt` and `F:\mixedcase.txt` are different).
 - Times on ext4 are shown in UTC, because ext4 stores Unix time and QEMU's clock runs in UTC.
   FAT stores local time with no time zone, and it is shown as written.

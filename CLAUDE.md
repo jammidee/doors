@@ -171,6 +171,10 @@ make debug    # QEMU waits for gdb on :1234
   `urange`/`copy_in`/`copy_out`) and a stub in `libdoors.c`. Never edit `syscalls.def` by hand; it is generated.
   MMURTL's calls are 0–109. A DOORS-only call goes at the end of the list in `tools/gen_syscalls.sh`
   (`ReadDir` = 110) and is never renumbered.
+- System directory `C:\DOORS\` (MMURTL's `\MMSYS\`): mkdisk copies every `build/user/*.elf` (`--progs`) and
+  `user/sys/*` (`HELP.CLI`, `COMMANDS.CLI`, `--sys`) there. The CLI is `user/progs/cli.c`, a port of
+  `MSAMPLES/CLI/CLI.C` (the original stays untouched; its header lists every change). File names without a
+  drive are relative to the job's path (`build_spec` in `kernel/fsys.c`).
 - Disks and files: `make test` builds `build/disk-test.img` (tools/mkdisk.py: MBR + FAT32 C:, FAT16 D:,
   FAT12 E:, ext4 F:) and afterwards `tools/check_disk.py` verifies it with `fsck.fat`/mtools and
   `e2fsck -fn`/`debugfs`. `make run` uses

@@ -1534,6 +1534,36 @@ static void test_job_calls(void)
 	kprintf("M9: job calls ok (paths, user name, SysIn/Out, CMOS clock, Chain, exit run file)\n");
 }
 
+/* M9c: the CLI from C:\DOORS\CLI.ELF, driven by keys the test runner types in three batches
+   (the key buffer holds 64): md + copy, then an external command found in the system directory
+   (hello, run with Chain; the CLI comes back as the exit run file), then dir + exit. */
+static void test_cli(void)
+{
+	const struct job *j;
+	U32 job, i;
+
+	CHECK(LoadNewJob(S("C:\\DOORS\\CLI.ELF"), &job) == ErcOk, "LoadNewJob(C:\\DOORS\\CLI.ELF)");
+	CHECK(SetVidOwner(job) == ErcOk, "SetVidOwner(CLI)");
+	Sleep(50);
+	kprintf("M9: type cli1\n");
+	for (i = 0; i < 100 && read_all(S("C:\\T9\\H.TXT"), fbuf, sizeof(fbuf)) != 25; i++)
+		Sleep(10);
+	CHECK(!memcmp(fbuf, "Hello from a FAT32 file.\n", 25), "CLI md + copy: C:\\T9\\H.TXT");
+	kprintf("M9: type cli2\n");
+	for (i = 0; i < 1000 && job_get(job)->loads < 3; i++)	/* CLI, HELLO.ELF, CLI again */
+		Sleep(1);
+	CHECK(job_get(job)->loads == 3, "the CLI did not chain to hello and come back (%u loads)",
+	      job_get(job)->loads);
+	Sleep(50);
+	kprintf("M9: type cli3\n");
+	j = wait_job(job, 1000);
+	CHECK(!j->alive && j->exit_erc == 0, "CLI exit: %s, error %u", j->alive ? "still running" : "ended",
+	      j->exit_erc);
+	CHECK(vid_owner() == 1 && fsys_open_count() == 0, "after the CLI: owner %u, %u files open",
+	      vid_owner(), fsys_open_count());
+	kprintf("M9: CLI ok (md, copy, external command via Chain and the exit run file, dir, exit)\n");
+}
+
 static void test_ext4_jobs(void)
 {
 	const struct job *j;
@@ -1618,6 +1648,7 @@ void selftest_run(void)
 	test_ext4_jobs();
 	test_video_kbd();
 	test_job_calls();
+	test_cli();
 
 	isr_register(8, df_handler);
 	recurse(0);

@@ -1,0 +1,23 @@
+DOORS CLI (MMURTL CLI V1.0)  DOORS OS - Copyright (c) 2026 Joel Damaso
+Internal CLI Commands:
+    Cls     - Clear Screen
+    Copy    - Copy Files  (From To)
+    Del     - Delete a file (File name)
+    Dir     - Directory listing (optional path, e.g. Dir F:\)
+    Debug   - Enter Debugger (not available yet in DOORS)
+    Dump    - Hex dump of a file
+    Exit    - Exit and terminate CLI (return to Monitor)
+    Help    - Display this file
+    MD      - Make a directory (Path)
+    Monitor - Return to Monitor (leave this CLI running)
+    Path    - Set file access path (New path e.g. D:\DIR\)
+    RD      - Remove an empty directory (Path)
+    Ren     - Rename a file (Current name  New name)
+    Run     - Execute a run file in this Job's context (Run file name)
+    Type    - Type the contents of text file to the screen (File name)
+
+Other commands run a program: NAME.ELF in the current path, then in
+C:\DOORS\, then the programs listed in C:\DOORS\COMMANDS.CLI.
+
+Global Hot keys:  CTRL-ALT-PAGE DOWN - switch video/keyboard to next job.
+                  CTRL-ALT-DEL - Kill currently displayed Job.

@@ -33,7 +33,12 @@ that DOORS can't mount is reported at boot as `Linux (not mounted)`, and file ca
 
 ## Paths
 
-- A path always starts with a drive letter: `C:\DIR1\SUB\DEEP.TXT`. There is no current directory.
+- A full path starts with a drive letter: `C:\DIR1\SUB\DEEP.TXT`.
+- Each job has a **path** (`SetPath`, the CLI's `path` command), as in MMURTL's FSYS.C `BuildSpec`.
+  A name without a drive is added to it: with the path `C:\DOORS\`, `HELP.CLI` means
+  `C:\DOORS\HELP.CLI`. A name that starts with `\` gets only the path's drive: `\BIN\HELLO.ELF` means
+  `C:\BIN\HELLO.ELF`. An empty name means the path itself (`ReadDir` of `""` lists it). Without a
+  path (job 1, or a program that never set one), names need a drive.
 - `\` and `/` both separate names. `.` and `..` work on both file systems.
 - Names may be long and contain spaces: `C:\A Long File Name.txt`.
 - The longest path is 259 characters (`MAX_PATH` 260).

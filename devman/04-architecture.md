@@ -90,8 +90,9 @@ open files (`kernel/job.c`).
 
 - Job 1 is the OS and monitor. Job 2 is reserved for the debugger, as in MMURTL. Programs start at
   job 3. Up to 64 jobs exist at a time.
-- `LoadNewJob(name)` loads a **static ELF64** program. A name without `:` or `\` is a boot module
-  (`hello`). A path is loaded from a volume (`C:\BIN\HELLO.ELF`). Segments are mapped with their own
+- `LoadNewJob(name)` loads a **static ELF64** program. A name without `:` or `\` is first looked up
+  among the boot modules (`hello`), then as a file relative to the caller's path. A path is loaded
+  from a volume (`C:\BIN\HELLO.ELF`). Segments are mapped with their own
   permissions: code read-only and executable, data non-executable.
 - The first task starts at the program's entry (`_start` in `user/lib/crt0.asm`) in ring 3, with
   a 64 KB stack. When `main` returns, its return value goes to `ExitJob`.

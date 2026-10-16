@@ -79,13 +79,15 @@ against file systems it did not create itself.
 
 | Drive | Size | Type | Contents |
 |---|---|---|---|
-| C: | 40 MB | FAT32 `DOORS32` | `HELLO.TXT`, `A Long File Name.txt`, `DIR1\SUB\DEEP.TXT`, `BIG.BIN`, `BIN\HELLO.ELF` |
+| C: | 40 MB | FAT32 `DOORS32` | `HELLO.TXT`, `A Long File Name.txt`, `DIR1\SUB\DEEP.TXT`, `BIG.BIN`, `BIN\HELLO.ELF`; `DOORS\` (the system directory: `CLI.ELF`, `HELP.CLI`, `COMMANDS.CLI` and every program); `MSAMPLES\READ.ME` |
 | D: | 16 MB | FAT16 `DOORS16` | `README.TXT` |
 | E: | 4 MB | FAT12 `DOORS12` | `TINY.TXT` |
 | F: | 64 MB | ext4 `DOORS-EXT4` | `HELLO.TXT`, `A long file name on ext4.txt`, `MixedCase.Txt`, `BIG.BIN`, `SPARSE.BIN`, `deep\dir\tree\FILE.TXT`, `BIN\HELLO.ELF` |
 
 `make run` and `make console` keep `build/disk.img` between sessions, so your changes stay. Delete
-the file to get a fresh disk. `make test` always builds a fresh `build/disk-test.img`.
+the file to get a fresh disk. It is also rebuilt, and your changes lost, when a program or a file in
+`port64/user/sys/` changes, so that `C:\DOORS\` always holds the current programs. `make test`
+always builds a fresh `build/disk-test.img`.
 
 ## Programs that start at boot
 

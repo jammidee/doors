@@ -12,6 +12,7 @@ today's computers under the new name **DOORS**.
 
 **Try the new 64-bit DOORS:** double-click `doors.bat` in the main folder. A window opens, DOORS starts
 inside it, and you can type commands such as `help`, `vols` (list the disks) or `dir F:\` (list files).
+Press **F1** for the classic command line (try `help`, `dir`, `type C:\MSAMPLES\READ.ME`).
 To leave, press Alt+2, type `quit` and press Enter.
 
 ---
@@ -100,5 +101,6 @@ We'll build it in steps. Each step must start up and work before moving on:
    - Next: protection against power cuts (the ext4 "journal") and starting DOORS from an ext4 disk
 10. The command line, editor and other programs, then re-check that everything above still works
    - Done so far: every program has its own screen, the keyboard goes to the program you are looking at, and Ctrl+Alt+PgDn flips between them (Ctrl+Alt+Del stops the program on screen)
+   - The original command line is back: press F1 and type `dir`, `copy`, `type`, `md`, `path` or the name of a program, just as in 1994. Several command lines can run at the same time.
 
 *Progress is logged day by day in the `devlogs` folder. The detailed technical plan is in `PLAN.md`.*

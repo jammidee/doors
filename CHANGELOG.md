@@ -12,6 +12,19 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 0.9.2 — 2026-10-16 — M9 step 9c: the CLI
+- MMURTL's CLI (`MSAMPLES/CLI/CLI.C` V1.0) ported as `user/progs/cli.c`: Cls, Copy, Del, Dir,
+  Dump, Exit, Help, MD, Monitor, Path, RD, Ren, Run, Type, and external commands run with `Chain`
+  (the CLI comes back as the exit run file).
+- Fixes over MMURTL's CLI: Copy keeps the last partial block (smoke test F5), Dump's ASCII column,
+  the command file is closed, Dir works on ext4 with long names.
+- System directory `C:\DOORS\` on the disk (CLI.ELF, HELP.CLI, COMMANDS.CLI and every program;
+  `mkdisk.py --progs --sys`). The monitor's F1 loads the CLI and gives it the screen; programs from
+  INITIAL.JOB get the screen too (as MMURTL's Monitor did).
+- File system: names without a drive are relative to the job's path (MMURTL FSYS.C `BuildSpec`).
+  `LoadNewJob`/`Chain` find a bare name as a file if no boot module has it.
+- Test: the CLI driven by typed commands (md, copy, an external command, dir, exit).
+
 ## 0.9.1 — 2026-10-16 — M9 step 9b: job calls and C library
 - `Chain` and the exit run file (`SetExitJob`/`GetExitJob`): a program can be replaced inside its
   job, and `ExitJob` reloads the exit run file. That is how the CLI comes back after a program.

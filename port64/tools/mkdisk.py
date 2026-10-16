@@ -3,7 +3,7 @@
 """Build the DOORS test disk: MBR + FAT32 (C:), FAT16 (D:), FAT12 (E:), made with the host's
 mkfs.fat and mtools, so the kernel's FAT code is checked against an independent implementation.
 
-  python3 tools/mkdisk.py OUT.img [--hello build/user/hello.elf]
+  python3 tools/mkdisk.py OUT.img [--hello build/user/hello.elf] [--progs build/user] [--sys user/sys]
 
 Layout (512-byte sectors):  2048.. FAT32 40 MB | FAT16 16 MB | FAT12 4 MB | ext4 64 MB | free (scratch)
 Files:
@@ -12,6 +12,9 @@ Files:
   C:\\DIR1\\SUB\\DEEP.TXT         nested directories
   C:\\BIG.BIN                   200000 bytes, byte i = (i * 7 + i // 251) & 0xFF (many clusters)
   C:\\BIN\\HELLO.ELF             the hello user program (LoadNewJob from a file)
+  C:\\DOORS\\                    system directory: every program (--progs), HELP.CLI and
+                                COMMANDS.CLI (--sys); the CLI is C:\\DOORS\\CLI.ELF
+  C:\\MSAMPLES\\READ.ME          MMURTL's sample READ.ME (smoke test)
   D:\\README.TXT, E:\\TINY.TXT
 """
 import os, struct, subprocess, sys, tempfile
@@ -61,9 +64,16 @@ def put(img, data, path, tmp):
     run("mcopy", "-i", img, src, "::" + path, env=env())
 
 
+def opt(name):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
+
+
 def main():
     out = sys.argv[1]
-    hello = sys.argv[sys.argv.index("--hello") + 1] if "--hello" in sys.argv else None
+    hello = opt("--hello")
+    progs = opt("--progs")      # build/user: every NAME.elf goes to C:\DOORS\NAME.ELF
+    sysdir = opt("--sys")       # user/sys: HELP.CLI, COMMANDS.CLI go to C:\DOORS\
+    repo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
     with tempfile.TemporaryDirectory() as tmp:
         imgs = []
         for i, (start, n, typ, bits, label) in enumerate(PARTS):
@@ -82,6 +92,17 @@ def main():
         put(c, big_bin(), "BIG.BIN", tmp)
         if hello:
             put(c, open(hello, "rb").read(), "BIN/HELLO.ELF", tmp)
+        # the system directory (MMURTL's \MMSYS\): the CLI, its files, the programs
+        run("mmd", "-i", c, "::DOORS", "::MSAMPLES", env=env())
+        for d_, pat_ in ((sysdir, None), (progs, ".elf")):
+            if d_:
+                for name in sorted(os.listdir(d_)):
+                    p_ = os.path.join(d_, name)
+                    if os.path.isfile(p_) and (pat_ is None or name.endswith(pat_)):
+                        put(c, open(p_, "rb").read(), "DOORS/" + name.upper(), tmp)
+        readme = os.path.join(repo, "MSAMPLES", "READ.ME")
+        if os.path.exists(readme):
+            put(c, open(readme, "rb").read(), "MSAMPLES/READ.ME", tmp)
         put(d, README_TXT, "README.TXT", tmp)
         put(e, TINY_TXT, "TINY.TXT", tmp)
 

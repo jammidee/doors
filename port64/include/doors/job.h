@@ -32,6 +32,7 @@ struct job {
 	char user[30];			/* SetUserName */
 	char exit_run[80];		/* SetExitJob: program loaded into the job when it exits */
 	char sysin[50], sysout[50];	/* SetSysIn / SetSysOut */
+	U32 loads;			/* programs loaded into this job (LoadNewJob, Chain, exit run file) */
 };
 
 void job_init(void);

@@ -251,12 +251,32 @@ static void breakpoint(struct regs *r)
 	kprintf("Breakpoint at RIP=%016lx\n", r->rip);
 }
 
+/* MMURTL Monitor LoadCLI: load the CLI from the system disk and give it the screen (the keyboard
+   follows). Falls back to the "cli" boot module if the disk has no \DOORS\CLI.ELF. */
+static void load_cli(void)
+{
+	U32 job;
+	erc_t erc = LoadNewJob("C:\\DOORS\\CLI.ELF", 16, &job);
+
+	if (erc)
+		erc = LoadNewJob("cli", 3, &job);
+	if (erc) {
+		kprintf("Can't load the CLI: error %u\n", erc);
+		return;
+	}
+	kprintf("New CLI Job Number is: %u\n", job);
+	SetVidOwner(job);
+}
+
 /* A function key runs a command (MMURTL's Monitor: F1 LdCLI, F2 Jobs, F3 Stats), then the
    prompt and the half-typed line are shown again. */
 static void fkey(const char *command, const char *line, U32 n)
 {
 	kprintf("\n");
-	cmd(command);
+	if (command)
+		cmd(command);
+	else
+		load_cli();
 	kprintf("> %.*s", (int)n, line);
 }
 
@@ -286,7 +306,7 @@ static NORETURN void interactive(void)
 				console_write("\b \b");
 			}
 		} else if (c == 0x0F) {
-			fkey("run cli", line, n);
+			fkey(NULL, line, n);		/* F1 LdCLI */
 		} else if (c == 0x10) {
 			fkey("jobs", line, n);
 		} else if (c == 0x11) {

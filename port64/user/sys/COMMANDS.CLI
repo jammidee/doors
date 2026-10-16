@@ -1,0 +1,13 @@
+;DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
+;This is Commands.CLI (DOORS version of MMSYS\COMMANDS.CLI).
+; Each line lists an external command that can be executed by
+; the CLI. The format of a line is:
+; CommandName FullPathForCommand arguments(optional)...
+; There should be NO spaces or tabs before the command name.
+; Each line must end with a LineFeed (your editor will do this).
+; Maximum line length is 80 characters.
+; Programs in C:\DOORS\ need no line here: the CLI finds NAME.ELF there by itself.
+;
+Hello    C:\BIN\HELLO.ELF
+;
+;End of command file

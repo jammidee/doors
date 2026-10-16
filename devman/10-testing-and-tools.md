@@ -29,6 +29,8 @@ is a failure. The serial log is kept in `build/serial.log`.
 | M7 | `disk ok`, `FAT read ok`, `FAT write ok`, loading from a file, `fsuser` in ring 3 | disks and FAT |
 | M8 | `ext4 read ok`, `ext4 write ok`, `ext4 stress ok (seed ...)`, loading from ext4 | ext4 |
 | M9 | `vidtest: all video and keyboard calls ok`, `M9: video and keyboard ok` | virtual screens, `ReadKbd` with keys typed by the runner (`{f1}`, `{up}`, `{backspace}`), `EditLine`, Ctrl-Alt-PgDn/Del |
+| M9 | `jobtest: job calls, Chain, exit job and C library ok`, `M9: job calls ok` | JCB strings, CMOS clock, the C library, `Chain` and the exit run file (three programs in one job) |
+| M9 | `hello: command line 'hello'`, `M9: CLI ok` | the CLI from `C:\DOORS\CLI.ELF` with typed commands: `md`, `copy`, an external command found in `C:\DOORS\` and run with `Chain`, `dir`, `exit`; `check_disk.py` checks the copied file |
 
 The expected lines are listed in `TEST_ARGS` in the Makefile (`--expect`). Lines the test runner
 answers with keystrokes are `--send` entries (`"M2: type doors=doors\n"` means: when `M2: type

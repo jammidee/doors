@@ -120,6 +120,9 @@ def main():
         check("C:\\DIR1\\MOVED\\INSIDE.TXT (moved directory)", mtype(c, "DIR1/MOVED/INSIDE.TXT") == b"inside\n")
         check("C:\\MOVEME gone after the move", not exists(c, "MOVEME"))
         check("C:\\USER.TXT written by ring 3", mtype(c, "USER.TXT") == b"written by a ring 3 program\n")
+        check("C:\\T9\\H.TXT copied by the CLI", mtype(c, "T9/H.TXT") == HELLO_TXT)
+        check("C:\\STDIO.TXT gone (renamed and removed by jobtest)",
+              not exists(c, "STDIO.TXT") and not exists(c, "STDIO2.TXT"))
         check("C:\\BIG.BIN untouched", mtype(c, "BIG.BIN") == big_bin())
         check("D:\\D16.TXT = 3000 bytes of pattern 5", mtype(d, "D16.TXT") == pat(3000, 5))
         check("E:\\E12.BIN = 1 MB of pattern 11 (FAT12 chains)", mtype(e, "E12.BIN") == pat(1 << 20, 11))

@@ -156,8 +156,9 @@ static erc_t read_file(const char *path, U32 len, U8 **buf, U64 *size, U32 *npag
 	return erc;
 }
 
-/* A program to load. MMURTL loaded a .RUN file by path. DOORS loads an ELF64 program either from a
-   file ("C:\BIN\HELLO.ELF") or, without a drive or directory, from a boot module of that name. */
+/* A program to load. MMURTL loaded a .RUN file by path. DOORS loads an ELF64 program from a boot
+   module whose name matches (no drive or directory given), or else from a file; a file name without
+   a drive is relative to the job's path ("C:\BIN\HELLO.ELF", "hello", "HELLO.ELF"). */
 struct program {
 	const U8 *img;
 	U64 size;
@@ -178,10 +179,8 @@ static erc_t find_program(const char *path, U32 len, struct program *p)
 	for (i = 0; i < len; i++)
 		if (path[i] == ':' || path[i] == '\\' || path[i] == '/')
 			p->name = path + i + 1;
-	if (p->name == path) {
-		m = boot_module(path, len);
-		if (!m)
-			return ErcNoSuchFile;
+	m = p->name == path ? boot_module(path, len) : NULL;
+	if (m) {
 		p->img = phys_to_virt(m->start);
 		p->size = m->end - m->start;
 		p->name = m->name;
@@ -189,8 +188,9 @@ static erc_t find_program(const char *path, U32 len, struct program *p)
 		p->args = m->args;
 		return ErcOk;
 	}
+	/* a file; a name without drive is relative to the caller's path (SetPath), as in MMURTL */
 	if ((erc = read_file(path, len, &buf, &p->size, &p->npages)))
-		return erc;
+		return p->name == path && erc == ErcBadFileSpec ? ErcNoSuchFile : erc;	/* no path set */
 	p->img = buf;
 	p->nlen = (U32)(path + len - p->name);
 	p->args = "";
@@ -228,6 +228,7 @@ static erc_t build(U32 j, const struct program *p)
 	memset(tname, 0, sizeof(tname));
 	memcpy(tname, p->name, p->nlen < 15 ? p->nlen : 15);
 	jobs[j].alive = true;
+	jobs[j].loads++;
 	t = task_create_user(tname, j, entry, USER_STACK_TOP, DEFAULT_PRIORITY, &erc);
 	if (!t) {
 		vmm_space_destroy(as);
@@ -481,7 +482,9 @@ void job_load_initial(void)
 		erc = LoadNewJob(s, n, &job);
 		if (erc)
 			kprintf("INITIAL.JOB: %.*s: error %u\n", (int)n, s, erc);
-		else
+		else {
 			kprintf("INITIAL.JOB: loaded %.*s as job %u\n", (int)n, s, job);
+			SetVidOwner(job);	/* as MMURTL's Monitor: the new job gets the screen */
+		}
 	}
 }

@@ -15,6 +15,7 @@
 
 #include <doors/console.h>
 #include <doors/fs.h>
+#include <doors/job.h>
 #include <doors/msg.h>
 #include <doors/string.h>
 #include <doors/task.h>
@@ -81,7 +82,7 @@ static erc_t path_vol(const char *path, U64 len, struct volume **v)
 	return (*v)->ops ? ErcOk : ErcNotSupported;
 }
 
-static erc_t do_open(struct RqBlk *r, struct fs_req *q, struct volume *v)
+static erc_t do_open(struct RqBlk *r, struct fs_req *q, struct volume *v, const char *path, U32 len)
 {
 	struct fnode n;
 	bool modifier;
@@ -90,7 +91,7 @@ static erc_t do_open(struct RqBlk *r, struct fs_req *q, struct volume *v)
 
 	if (q->mode > ModeModify)
 		return ErcBadOpenMode;
-	if ((erc = v->ops->lookup((const char *)r->pData1, (U32)r->cbData1, &n)))
+	if ((erc = v->ops->lookup(path, len, &n)))
 		return erc;
 	if (n.attr & ATTR_DIR)
 		return ErcNotAFile;
@@ -114,8 +115,32 @@ static erc_t do_open(struct RqBlk *r, struct fs_req *q, struct volume *v)
 }
 
 /* Requests that name a path. */
+/* MMURTL FSYS.C BuildSpec: a name with a drive ("C:...") is used as it is; one that starts with
+   '\' gets the drive of the requesting job's path (SetPath); any other name, also an empty one,
+   is appended to the job's whole path. */
+static U32 build_spec(U32 job, const char *name, U32 len, char *out)
+{
+	char jp[80];
+	U32 n = 0;
+
+	if (len >= 2 && name[1] == ':') {
+		memcpy(out, name, len);
+		return len;
+	}
+	if (GetPath(job, jp, &n))
+		n = 0;
+	if (len && name[0] == '\\' && n >= 2)
+		n = 2;					/* drive only */
+	if (n + len >= MAX_PATH)
+		return MAX_PATH;			/* too long: path_vol refuses it */
+	memcpy(out, jp, n);
+	memcpy(out + n, name, len);
+	return n + len;
+}
+
 static erc_t serve_path(struct RqBlk *r, struct fs_req *q)
 {
+	static char spec[MAX_PATH], spec2[MAX_PATH];	/* one FILESYS task: static is fine */
 	const char *path = (const char *)r->pData1;
 	U32 len = (U32)r->cbData1;
 	struct volume *v, *v2;
@@ -127,6 +152,16 @@ static erc_t serve_path(struct RqBlk *r, struct fs_req *q)
 		path = q->name2;
 		len = q->name2_len;
 	}
+	len = build_spec(r->RqOwnerJob, path, len, spec);
+	path = spec;
+	if (r->ServiceCode == FS_RENAME) {
+		q->name2_len = build_spec(r->RqOwnerJob, q->name2, q->name2_len, spec2);
+		if (q->name2_len >= MAX_PATH)
+			return ErcBadFileSpec;
+		memcpy(q->name2, spec2, q->name2_len);
+	}
+	if (len >= MAX_PATH)
+		return ErcBadFileSpec;
 	if ((erc = path_vol(path, len, &v)))
 		return erc;
 	if (v->ro && (r->ServiceCode == FS_CREATE || r->ServiceCode == FS_MKDIR ||
@@ -135,7 +170,7 @@ static erc_t serve_path(struct RqBlk *r, struct fs_req *q)
 
 	switch (r->ServiceCode) {
 	case FS_OPEN:
-		return do_open(r, q, v);
+		return do_open(r, q, v, path, len);
 	case FS_CREATE:
 		return v->ops->create(path, len, (U8)(q->attr & ~ATTR_DIR), &n);
 	case FS_MKDIR:
