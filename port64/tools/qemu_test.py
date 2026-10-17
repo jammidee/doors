@@ -67,6 +67,7 @@ def main():
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--qemu", default="qemu-system-x86_64")
     ap.add_argument("--disk", help="raw disk image attached as the ATA primary master")
+    ap.add_argument("--disk2", help="raw disk image attached as the ATA primary slave")
     a = ap.parse_args()
 
     sock = f"/tmp/doors-test-{os.getpid()}.mon"
@@ -87,6 +88,8 @@ def main():
         # cache=unsafe: the test disk is rebuilt every run, so the host need not fsync each flush
         # (an fsync of an image on a Windows drive under WSL can take seconds)
         cmd += ["-drive", f"file={a.disk},format=raw,if=ide,index=0,cache=unsafe", "-boot", "d"]
+    if a.disk2:
+        cmd += ["-drive", f"file={a.disk2},format=raw,if=ide,index=1,cache=unsafe"]
     q = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     start = time.time()
     rc = None

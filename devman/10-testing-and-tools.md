@@ -30,6 +30,7 @@ is a failure. The serial log is kept in `build/serial.log`.
 | M8 | `ext4 read ok`, `ext4 write ok`, `ext4 stress ok (seed ...)`, loading from ext4 | ext4 |
 | M9 | `vidtest: all video and keyboard calls ok`, `M9: video and keyboard ok` | virtual screens, `ReadKbd` with keys typed by the runner (`{f1}`, `{up}`, `{backspace}`), `EditLine`, Ctrl-Alt-PgDn/Del |
 | M9 | `jobtest: job calls, Chain, exit job and C library ok`, `M9: job calls ok` | JCB strings, CMOS clock, the C library, `Chain` and the exit run file (three programs in one job) |
+| M8b | `ext4 on F: journal replayed: 1 transactions, 1 blocks`, `M8b: htree directory writes ok` | replay of a Linux journal transaction left on the test disk; on the second test disk (GPT, G:, ext4 with 1K blocks): 450 creates, 100 deletes and 20 moves in Linux-indexed directories, with leaf and node splits and a root growing to two levels. `check_disk.py` runs `e2fsck -fn` on G: and compares every name |
 | M9 | `hello: command line 'hello'`, `M9: CLI ok` | the CLI from `C:\DOORS\CLI.ELF` with typed commands: `md`, `copy`, an external command found in `C:\DOORS\` and run with `Chain`, `edit` (create a file with a long name, type, Alt-S, Alt-Q), `dir`, `exit`; `check_disk.py` checks both files |
 | M9 | `NUMBERS Service gave out number: 1.`, `M9: samples ok` | the NUMBERS service (waits for a key through the KEYBOARD service) with two `testsvc` clients; BusyLoop killed with Ctrl-Alt-Del; no pages leaked |
 

@@ -221,7 +221,9 @@ Steps:
         (also at a fixed point inside a commit); Linux's `e2fsck -fy` must replay DOORS's journal, and
         DOORS's own replay on the next boot must leave `e2fsck -fn` clean with every completed operation
         present.
-- [ ] htree directory writes and deeper extent trees on write. → M8b (1.2.0)
+- [x] htree directory writes (1.2.0): one and two index levels, leaf and node splits, root growth;
+      uninitialised block groups built on first use. Tested on a GPT disk with Linux-indexed directories.
+- [ ] Deeper extent trees on write (ROADMAP step 1.2).
 - [~] Image tool: `tools/mkdisk.py` adds an ext4 partition (F:) built with `mkfs.ext4 -d`. An ext4 *system*
       disk holding the `MMSYS` contents, booted from, comes in M8b/M9.
 - [x] Test suite: M8 self-tests (read, write, a 5 GB sparse file, long and case-different names, rename,

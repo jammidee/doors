@@ -43,11 +43,14 @@ Each milestone has a demo (what you'll see) and acceptance checks (what must pas
 | M6 | **User mode & jobs** ✅ | Ring-3 ELF "hello" job started from `INITIAL.JOB` | Bad pointers return errors (no kernel crash); jobs exit and free all memory |
 | M7 | **Disks & FAT** ✅ | `dir` of a FAT image from a test job | Read/write FAT12/16/32 matches host `mtools` view of the same image |
 | M8 | **ext4** ✅ | ext4 volume read/write; long names; >4 GB file | Random stress test (new seed each `make test`), then host `e2fsck -fn` reports clean ✅ |
-| M8b | **ext4 journal & root** (journal ✅ 1.1.0) | jbd2 replay + journaled writes ✅; htree directory writes; boot from an ext4 system disk | Power-cut test (kill QEMU mid-write), then replay and `e2fsck -fn` clean ✅ (`make powercut`) |
+| M8b | **ext4 journal & root** (journal ✅ 1.1.0, htree ✅ 1.2.0) | jbd2 replay + journaled writes ✅; htree directory writes ✅; boot from an ext4 system disk | Power-cut test (kill QEMU mid-write), then replay and `e2fsck -fn` clean ✅ (`make powercut`) |
 | M9 | **User land** ✅ (1.0.0) | Monitor + CLI + editor running on 64-bit | `docs/SMOKE_TEST.md` passes on 64-bit, same as on 32-bit ✅ (24 pass, P7 debugger moved to M10) |
 | M10 | **Optional** | — | Debugger/disassembler, 64-bit CM32/DASM, UEFI, APIC, SMP |
 
 M7 and M8 can overlap with M9: the CLI can start on FAT before ext4 is finished.
+
+After 1.0, [ROADMAP.md](ROADMAP.md) lays out the way from here to a stable OS (storage, testing, kernel hardening,
+real hardware, SMP, security, a usable system, release engineering).
 
 ## How each step is verified
 

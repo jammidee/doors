@@ -99,6 +99,32 @@ def check_ext4(f4):
     check("F:\\BIG.BIN untouched", e4cat(f4, "/BIG.BIN") == big_bin(300000))
 
 
+def check_disk2(disk2, tmp):
+    """G: (GPT, 1K-block ext4): DOORS wrote into its htree directories (kernel/selftest.c test_htree)."""
+    from mkdisk import D2_START, D2_SECTORS, htree_name
+    g = os.path.join(tmp, "g.img")
+    with open(disk2, "rb") as f, open(g, "wb") as o:
+        f.seek(D2_START * SEC)
+        o.write(f.read(D2_SECTORS * SEC))
+    r = subprocess.run(["e2fsck", "-fn", g], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    check("e2fsck -fn G: ext4 (checks every htree hash range): no errors", r.returncode == 0,
+          r.stdout.decode(errors="replace").strip().splitlines()[-4:])
+    for d, levels in (("ONE", 1), ("TWO", 1)):
+        out = debugfs(g, f"htree /{d}").decode(errors="replace")
+        m = re.search(r"Indirect levels: (\d+)", out)
+        check(f"G:\\{d} is an htree with {levels + 1} levels", m and int(m.group(1)) == levels,
+              m.group(0) if m else "not indexed")
+    # ls -p also lists unused entries (inode 0: a deleted first entry of a block keeps its name)
+    names = {d: {l.split("/")[5] for l in debugfs(g, f"ls -p /{d}").decode().splitlines()
+                 if l.count("/") >= 6 and l.split("/")[1] != "0"} - {".", ".."} for d in ("ONE", "TWO")}
+    one = {htree_name("one", i, "o") for i in range(1, 151)} | \
+          {htree_name("new", i, "n") for i in range(21, 251)}
+    two = {htree_name("two", i, "t") for i in range(1, 601) if i % 6} | \
+          {htree_name("add", i, "a") for i in range(1, 201)} | {htree_name("new", i, "n") for i in range(1, 21)}
+    check("G:\\ONE has exactly the 380 expected names", names["ONE"] == one, f"{len(names['ONE'])} names")
+    check("G:\\TWO has exactly the 720 expected names", names["TWO"] == two, f"{len(names['TWO'])} names")
+
+
 def main():
     disk = sys.argv[1]
     with tempfile.TemporaryDirectory() as tmp:
@@ -143,6 +169,8 @@ def main():
               r.stdout.decode(errors="replace").strip())
 
         check_ext4(f4)
+        if len(sys.argv) > 2:
+            check_disk2(sys.argv[2], tmp)
 
     print("CHECK_DISK " + ("PASS" if not fails else f"FAIL ({len(fails)})"))
     return 1 if fails else 0

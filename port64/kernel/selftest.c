@@ -1619,6 +1619,91 @@ static void test_samples(void)
 	kprintf("M9: samples ok (NUMBERS service + KEYBOARD service request, testsvc, BusyLoop + Ctrl-Alt-Del)\n");
 }
 
+/* M8b: writing into htree directories, on the second test disk (GPT, ext4 with 1K blocks, G:).
+   mkdisk made ONE (150 entries, 1 index level) and TWO (600 entries, 2 levels) with e2fsck -D;
+   the names are long (197 bytes, tools/mkdisk.py htree_name) so a few hundred fill many leaves.
+   ONE's root fills up and becomes 2 levels; TWO's leaves and index nodes split. The host then runs
+   e2fsck -fn, which checks every hash range of the index (tools/check_disk.py). */
+static char hpath[MAX_PATH];
+
+static U32 hname(const char *dir, const char *prefix, U32 i, char fill)
+{
+	U32 n = 0, k;
+
+	memcpy(hpath, "G:\\", 3);
+	n = 3;
+	memcpy(hpath + n, dir, 3);
+	n += 3;
+	hpath[n++] = '\\';
+	memcpy(hpath + n, prefix, 3);
+	n += 3;
+	hpath[n++] = (char)('0' + i / 1000);
+	hpath[n++] = (char)('0' + i / 100 % 10);
+	hpath[n++] = (char)('0' + i / 10 % 10);
+	hpath[n++] = (char)('0' + i % 10);
+	for (k = 0; k < 190; k++)
+		hpath[n++] = fill;
+	hpath[n] = 0;
+	return n;
+}
+
+static U32 dir_count(const char *path, U32 len)
+{
+	struct dir_entry de;
+	U32 i;
+
+	for (i = 0; ReadDir(path, len, i, &de) == ErcOk; i++)
+		;
+	return i;
+}
+
+static void test_htree(void)
+{
+	U32 i, n, h;
+	char to[MAX_PATH];
+
+	CHECK(read_all(S("G:\\README.TXT"), fbuf, sizeof(fbuf)) == 29, "G: (GPT disk 13, 1K-block ext4)");
+	CHECK(dir_count(S("G:\\ONE")) == 150 && dir_count(S("G:\\TWO")) == 600, "htree directories as made");
+	for (i = 1; i <= 250; i++) {
+		erc_t e;
+
+		n = hname("ONE", "new", i, 'n');
+		e = CreateFile(hpath, n, 0);
+		CHECK(e == ErcOk, "htree create G:\\ONE new%u: error %u", i, e);
+	}
+	for (i = 1; i <= 200; i++) {
+		erc_t e;
+
+		n = hname("TWO", "add", i, 'a');
+		e = CreateFile(hpath, n, 0);
+		CHECK(e == ErcOk, "htree create G:\\TWO add%u: error %u", i, e);
+	}
+	for (i = 6; i <= 600; i += 6) {
+		n = hname("TWO", "two", i, 't');
+		CHECK(OpenFile(hpath, n, ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk,
+		      "htree delete G:\\TWO two%u", i);
+	}
+	for (i = 1; i <= 20; i++) {
+		n = hname("ONE", "new", i, 'n');
+		memcpy(to, hpath, n + 1);
+		to[3] = 'T';				/* "G:\ONE\..." -> "G:\TWO\..." */
+		to[4] = 'W';
+		to[5] = 'O';
+		CHECK(RenameFile(hpath, n, to, n) == ErcOk, "htree rename new%u into G:\\TWO", i);
+	}
+	CHECK(dir_count(S("G:\\ONE")) == 380, "G:\\ONE has %u entries, expected 380", dir_count(S("G:\\ONE")));
+	CHECK(dir_count(S("G:\\TWO")) == 720, "G:\\TWO has %u entries, expected 720", dir_count(S("G:\\TWO")));
+	for (i = 1; i <= 250; i++) {
+		n = hname(i <= 20 ? "TWO" : "ONE", "new", i, 'n');
+		CHECK(OpenFile(hpath, n, ModeRead, 1, &h) == ErcOk, "htree lookup new%u", i);
+		CloseFile(h);
+	}
+	n = hname("TWO", "two", 6, 't');
+	CHECK(OpenFile(hpath, n, ModeRead, 1, &h) == ErcNoSuchFile, "a deleted htree entry is gone");
+	kprintf("M8b: htree directory writes ok (leaf and index node splits, 1 -> 2 levels, delete, "
+		"rename across directories; GPT disk)\n");
+}
+
 static void test_ext4_jobs(void)
 {
 	const struct job *j;
@@ -1700,6 +1785,7 @@ void selftest_run(void)
 	test_ext4_read();
 	test_ext4_write();
 	test_ext4_stress();
+	test_htree();
 	test_ext4_jobs();
 	test_video_kbd();
 	test_job_calls();

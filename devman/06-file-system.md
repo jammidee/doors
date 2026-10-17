@@ -143,6 +143,13 @@ specification says.
   a 5 GB sparse file is part of the tests.
 - **Writes:** block and inode allocation, extending files, truncating, sparse extension,
   create/delete, rename/move (directories get their `..` and link counts fixed), mkdir/rmdir.
+- **Big directories:** Linux keeps a hash index (htree) on directories larger than a block. DOORS
+  adds names to such directories through the index: it splits full leaves and index nodes, and a
+  full index root becomes two levels, as Linux's own code does. `e2fsck` checks every hash range
+  after the tests. Directories DOORS creates itself stay plain lists, which is valid ext4.
+- **Fresh volumes:** `mkfs.ext4` leaves most block groups uninitialised (`BLOCK_UNINIT`,
+  `INODE_UNINIT`). DOORS builds their bitmaps on first use, so the whole volume can be filled.
+- **Partition tables:** MBR and GPT (tested with a second test disk).
 - **Times** are Unix time (UTC).
 - After every `make test`, Linux's `e2fsck -fn` checks the volume. Its contents are checked with
   `debugfs`.
@@ -174,7 +181,7 @@ ext4 volumes made by `mkfs.ext4` have a journal (JBD2), and DOORS uses it as Lin
 |---|---|
 | Unknown read-only features, old block-mapped (ext2/3-style) volumes, a journal with checksum features or an external journal | mounted read-only |
 | Unknown incompatible features (encryption, inline data, ...) | not mounted |
-| Writing to an indexed (htree) directory, as Linux makes for large directories | `ErcNotSupported`. Small directories are plain lists and work |
+| A directory with a 3-level htree index (`largedir`, millions of files) | writing gives `ErcDirFull`; reading works. Indexes with 1 or 2 levels, which Linux makes for big directories, are written normally |
 | Writing a file whose extent tree is deeper than 1 level (very fragmented, written by Linux) | `ErcNotSupported`. Reading works at any depth |
 | Reading a block-mapped (ext2/3-style) file | `ErcNotSupported` |
 

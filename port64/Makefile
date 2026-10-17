@@ -92,6 +92,7 @@ TEST_ARGS := \
 	--expect "M8: ext4 read ok" \
 	--expect "M8: ext4 write ok" \
 	--expect "M8: ext4 stress ok" \
+	--expect "M8b: htree directory writes ok" \
 	--expect "M8: LoadNewJob from ext4 ok" \
 	--expect "DOORS: M8 OK" \
 	--expect "vidtest: all video and keyboard calls ok" \
@@ -205,6 +206,8 @@ $(BUILD)/doors-pccheck.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 # builds a fresh build/disk-test.img, and tools/check_disk.py checks it with fsck.fat/mtools after.
 DISK      := $(BUILD)/disk.img
 TEST_DISK := $(BUILD)/disk-test.img
+# the second test disk (primary slave, G:): GPT, ext4 with 1K blocks and htree directories
+TEST_DISK2 := $(BUILD)/disk2-test.img
 QEMU_DISK  = -drive file=$(1),format=raw,if=ide,index=0 -boot d
 
 MKDISK_ARGS = --hello $(BUILD)/user/hello.elf --progs $(BUILD)/user --sys user/sys
@@ -224,10 +227,10 @@ debug: $(ISO) $(DISK)
 	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio -s -S $(QEMU_EXTRA)
 
 test: $(TEST_ISO) $(USER_ELFS)
-	python3 tools/mkdisk.py $(TEST_DISK) $(MKDISK_ARGS)
-	python3 tools/qemu_test.py --iso $(TEST_ISO) --disk $(TEST_DISK) --log $(BUILD)/serial.log \
-		--timeout $(TEST_TIMEOUT) $(TEST_ARGS)
-	python3 tools/check_disk.py $(TEST_DISK)
+	python3 tools/mkdisk.py $(TEST_DISK) $(MKDISK_ARGS) --disk2 $(TEST_DISK2)
+	python3 tools/qemu_test.py --iso $(TEST_ISO) --disk $(TEST_DISK) --disk2 $(TEST_DISK2) \
+		--log $(BUILD)/serial.log --timeout $(TEST_TIMEOUT) $(TEST_ARGS)
+	python3 tools/check_disk.py $(TEST_DISK) $(TEST_DISK2)
 
 # Kill QEMU in the middle of journaled ext4 writes, then check the disk with Linux and DOORS
 powercut: $(PC_ISOS) $(USER_ELFS)

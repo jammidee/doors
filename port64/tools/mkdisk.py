@@ -66,6 +66,69 @@ def put(img, data, path, tmp):
     run("mcopy", "-i", img, src, "::" + path, env=env())
 
 
+# ---- the second test disk (device 13, volume G:): GPT, one ext4 partition with 1K blocks ----
+# ONE and TWO are htree directories (e2fsck -D indexes them): ONE has one index level, TWO two.
+D2_TOTAL = 98304                 # 48 MB
+D2_START, D2_SECTORS = 2048, 65536
+D2_README = b"1K-block ext4 on a GPT disk.\n"
+
+
+def htree_name(prefix, i, fill):
+    """Long names (197 bytes) so a few hundred fill many 1K leaves (kernel/selftest.c: same)."""
+    return f"{prefix}{i:04}" + fill * 190
+
+
+def gpt_disk(out, part_img):
+    import uuid, zlib
+    entries = bytearray(128 * 128)
+    linux = uuid.UUID("0FC63DAF-8483-4772-8E79-3D69D8477DE4").bytes_le
+    name = "DOORS-1K".encode("utf-16-le")
+    entries[0:128] = (linux + uuid.uuid4().bytes_le +
+                      struct.pack("<QQQ", D2_START, D2_START + D2_SECTORS - 1, 0) + name.ljust(72, b"\0"))
+    ecrc = zlib.crc32(entries) & 0xFFFFFFFF
+    disk_guid = uuid.uuid4().bytes_le
+
+    def header(my, alt, elba):
+        h = bytearray(struct.pack("<8sIIIIQQQQ16sQIII", b"EFI PART", 0x10000, 92, 0, 0, my, alt,
+                                  34, D2_TOTAL - 34, disk_guid, elba, 128, 128, ecrc))
+        h[16:20] = struct.pack("<I", zlib.crc32(bytes(h)) & 0xFFFFFFFF)
+        return bytes(h).ljust(SEC, b"\0")
+
+    mbr = bytearray(SEC)
+    mbr[446:462] = struct.pack("<B3sB3sII", 0, b"\x00\x02\x00", 0xEE, b"\xff\xff\xff", 1, D2_TOTAL - 1)
+    mbr[510:512] = b"\x55\xaa"
+    with open(out, "wb") as f:
+        f.truncate(D2_TOTAL * SEC)
+        f.seek(0)
+        f.write(mbr)
+        f.write(header(1, D2_TOTAL - 1, 2))
+        f.write(entries)
+        f.seek((D2_TOTAL - 33) * SEC)
+        f.write(entries)
+        f.write(header(D2_TOTAL - 1, 1, D2_TOTAL - 33))
+        f.seek(D2_START * SEC)
+        f.write(open(part_img, "rb").read())
+
+
+def make_disk2(out, tmp):
+    tree = os.path.join(tmp, "d2tree")
+    for sub in ("ONE", "TWO"):
+        os.makedirs(os.path.join(tree, sub))
+    for i in range(1, 151):
+        open(os.path.join(tree, "ONE", htree_name("one", i, "o")), "wb").close()
+    for i in range(1, 601):
+        open(os.path.join(tree, "TWO", htree_name("two", i, "t")), "wb").close()
+    with open(os.path.join(tree, "README.TXT"), "wb") as f:
+        f.write(D2_README)
+    img = os.path.join(tmp, "d2.img")
+    with open(img, "wb") as f:
+        f.truncate(D2_SECTORS * SEC)
+    run("mkfs.ext4", "-q", "-F", "-T", "default", "-b", "1024", "-I", "256", "-L", "DOORS-1K",
+        "-d", tree, img, str(D2_SECTORS // 2))
+    subprocess.run(["e2fsck", "-fyD", img], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    gpt_disk(out, img)
+
+
 def opt(name):
     return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
 
@@ -76,6 +139,10 @@ def main():
     progs = opt("--progs")      # build/user: every NAME.elf goes to C:\DOORS\NAME.ELF
     sysdir = opt("--sys")       # user/sys: HELP.CLI, COMMANDS.CLI go to C:\DOORS\
     repo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    disk2 = opt("--disk2")      # also build the second test disk (GPT, 1K-block ext4 with htrees)
+    if disk2:
+        with tempfile.TemporaryDirectory() as tmp:
+            make_disk2(disk2, tmp)
     with tempfile.TemporaryDirectory() as tmp:
         imgs = []
         for i, (start, n, typ, bits, label) in enumerate(PARTS):

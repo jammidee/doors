@@ -109,7 +109,8 @@ def e2fsck(img, opts):
 def ls_pc(img):
     out = subprocess.run(["debugfs", "-R", "ls -p /PC", img], stdout=subprocess.PIPE,
                          stderr=subprocess.DEVNULL).stdout.decode()
-    return {f.split("/")[5] for f in out.splitlines() if f.count("/") >= 6 and f.split("/")[5] not in (".", "..")}
+    return {f.split("/")[5] for f in out.splitlines()   # inode 0 = an unused (deleted) entry
+            if f.count("/") >= 6 and f.split("/")[1] != "0" and f.split("/")[5] not in (".", "..")}
 
 
 def cat(img, path):

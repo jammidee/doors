@@ -17,9 +17,10 @@
      directly, as before.
    - extent trees up to depth 1 (4 extents in the inode, then up to 4 leaf blocks of 340 each);
      a deeper tree (written by Linux) is read fine but not modified (ErcNotSupported).
-   - directories with an htree index (Linux makes them for big directories) are read fine but not
-     modified (ErcNotSupported); small directories are plain lists and are written normally.
-   - allocation only in groups whose bitmaps are initialised (not BLOCK_/INODE_UNINIT).
+   - directories with an htree index (Linux makes them for big directories) are written too, with
+     one or two index levels (see "htree" below); DOORS's own new directories stay plain lists.
+   - groups that mkfs left uninitialised (BLOCK_UNINIT, INODE_UNINIT) get their bitmaps built on
+     first use, as Linux does.
    Names are case-sensitive bytes (UTF-8), as on Linux. Called only by the FILESYS service task,
    so the static scratch buffers below need no locking. */
 
@@ -708,6 +709,80 @@ static erc_t e4_read(struct fnode *n, U64 off, U8 *buf, U64 len, U64 *done)
 /* ---- allocation ---- */
 
 /* Up to `want` free blocks in a row, starting the search at goal. */
+/* ---- groups that mkfs left uninitialised (BLOCK_UNINIT, INODE_UNINIT) ---- */
+
+/* sparse_super: a superblock backup in groups 0, 1 and the powers of 3, 5 and 7 */
+static bool has_super(struct ext4 *e, U32 g)
+{
+	U32 b[3] = { 3, 5, 7 }, i;
+
+	if (!(e->ro_compat & RO_SPARSE_SUPER) || g <= 1)
+		return true;
+	for (i = 0; i < 3; i++) {
+		U64 p;
+
+		for (p = b[i]; p < g; p *= b[i])
+			;
+		if (p == g)
+			return true;
+	}
+	return false;
+}
+
+static U32 group_blocks(struct ext4 *e, U32 g)
+{
+	U64 gstart = e->first_data + (U64)g * e->bpg;
+
+	return e->nblocks - gstart < e->bpg ? (U32)(e->nblocks - gstart) : e->bpg;
+}
+
+static void mark(U8 *bm, U64 from, U64 to)
+{
+	for (; from < to; from++)
+		bm[from / 8] |= (U8)(1 << (from % 8));
+}
+
+/* BLOCK_UNINIT: the block bitmap Linux builds (ext4_init_block_bitmap) into b_bm, the flag cleared.
+   Its free count must match the descriptor's, else the group is left alone. */
+static erc_t init_block_bitmap(struct ext4 *e, struct gd *d, U32 g)
+{
+	U64 gstart = e->first_data + (U64)g * e->bpg, own[3];
+	U32 nbits = group_blocks(e, g), i, k, free = 0;
+	U32 itb = (e->ipg * e->isize + e->bs - 1) / e->bs;
+	U32 gdtb = (e->ngroups * e->dsize + e->bs - 1) / e->bs;
+
+	memset(b_bm, 0, e->bs);
+	if (has_super(e, g))
+		mark(b_bm, 0, 1 + gdtb + le16(e->sb + 0xCE));	/* + s_reserved_gdt_blocks */
+	own[0] = GD_BLOCK_BITMAP(e, d);
+	own[1] = GD_INODE_BITMAP(e, d);
+	own[2] = GD_INODE_TABLE(e, d);
+	for (i = 0; i < 3; i++)
+		for (k = 0; k < (i == 2 ? itb : 1); k++)
+			if (own[i] + k >= gstart && own[i] + k < gstart + nbits)
+				mark(b_bm, own[i] + k - gstart, own[i] + k - gstart + 1);
+	for (i = 0; i < nbits; i++)
+		if (!(b_bm[i / 8] & (1 << (i % 8))))
+			free++;
+	if (free != GD_FREE_BLOCKS(e, d)) {
+		kprintf("ext4 %c: group %u: uninitialised bitmap would have %u free blocks, not %u\n",
+			e->vol->letter, g, free, GD_FREE_BLOCKS(e, d));
+		return ErcNotSupported;
+	}
+	mark(b_bm, nbits, (U64)e->bs * 8);			/* padding past the group's end */
+	d->raw[0x12] &= ~BG_BLOCK_UNINIT;
+	bitmap_csum(e, d, b_bm, false);
+	return mwr(e, GD_BLOCK_BITMAP(e, d), b_bm);
+}
+
+/* INODE_UNINIT: every inode free (ext4_init_inode_bitmap), padding past ipg set */
+static void init_inode_bitmap(struct ext4 *e, struct gd *d)
+{
+	memset(b_bm, 0, e->bs);
+	mark(b_bm, e->ipg, (U64)e->bs * 8);
+	d->raw[0x12] &= ~BG_INODE_UNINIT;
+}
+
 static erc_t balloc(struct ext4 *e, U64 goal, U32 want, U64 *start, U32 *got)
 {
 	U32 gi, g0;
@@ -723,10 +798,16 @@ static erc_t balloc(struct ext4 *e, U64 goal, U32 want, U64 *start, U32 *got)
 
 		if ((erc = gd_get(e, g, &d)))
 			return erc;
-		if ((d.raw[0x12] & BG_BLOCK_UNINIT) || !GD_FREE_BLOCKS(e, &d))
+		if (!GD_FREE_BLOCKS(e, &d))
 			continue;
-		if ((erc = brd(e, GD_BLOCK_BITMAP(e, &d), b_bm)))
+		if (d.raw[0x12] & BG_BLOCK_UNINIT) {
+			if ((erc = init_block_bitmap(e, &d, g)) == ErcNotSupported)
+				continue;			/* a layout we don't know: skip the group */
+			if (erc)
+				return erc;
+		} else if ((erc = brd(e, GD_BLOCK_BITMAP(e, &d), b_bm))) {
 			return erc;
+		}
 		nbits = e->nblocks - gstart < e->bpg ? (U32)(e->nblocks - gstart) : e->bpg;
 		from = gi == 0 && goal >= gstart ? (U32)(goal - gstart) : 0;
 		for (i = from; i < nbits + from; i++) {		/* from the goal, wrapping around */
@@ -794,9 +875,11 @@ static erc_t ialloc(struct ext4 *e, bool dir, U32 *ino)
 
 		if ((erc = gd_get(e, g, &d)))
 			return erc;
-		if ((d.raw[0x12] & BG_INODE_UNINIT) || !GD_FREE_INODES(e, &d))
+		if (!GD_FREE_INODES(e, &d))
 			continue;
-		if ((erc = brd(e, GD_INODE_BITMAP(e, &d), b_bm)))
+		if (d.raw[0x12] & BG_INODE_UNINIT)
+			init_inode_bitmap(e, &d);
+		else if ((erc = brd(e, GD_INODE_BITMAP(e, &d), b_bm)))
 			return erc;
 		for (i = g == 0 ? e->first_ino - 1 : 0; i < e->ipg; i++)
 			if (!(b_bm[i / 8] & (1 << (i % 8))))
@@ -813,6 +896,9 @@ static erc_t ialloc(struct ext4 *e, bool dir, U32 *ino)
 		unused = GD_ITABLE_UNUSED(e, &d);
 		if (i >= e->ipg - unused)
 			gd_set32(e, &d, 0x1C, 0x32, e->ipg - i - 1);
+		/* an inode in use needs the group's block bitmap too (Linux __ext4_new_inode) */
+		if ((d.raw[0x12] & BG_BLOCK_UNINIT) && (erc = init_block_bitmap(e, &d, g)))
+			return erc;
 		if ((erc = gd_put(e, &d)))
 			return erc;
 		sb_add_free_inodes(e, -1);
@@ -1169,6 +1255,25 @@ static void dir_tail(struct ext4 *e, U32 dino, const U8 *draw, U8 *blk)
 	put32(t + 8, crc32c(ino_seed(e, dino, draw), blk, e->bs - 12));
 }
 
+/* One more block at the end of directory dino (the caller fills and writes it, then iputs). */
+static erc_t dir_append(struct ext4 *e, U32 dino, U8 *draw, U32 *lblk, U64 *pblk)
+{
+	U64 nblk = (i_size(draw) + e->bs - 1) / e->bs, goal = 0, prev;
+	U32 got, r2;
+	erc_t erc;
+
+	if (nblk && ext_map(e, draw, (U32)nblk - 1, &prev, &r2) == ErcOk && prev)
+		goal = prev + 1;
+	if ((erc = balloc(e, goal, 1, pblk, &got)) || (erc = ext_add(e, dino, draw, (U32)nblk, *pblk, 1)))
+		return erc;
+	add_blocks(e, draw, 1);
+	set_size(draw, (nblk + 1) * e->bs);
+	*lblk = (U32)nblk;
+	return ErcOk;
+}
+
+static erc_t dx_add(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 nlen, U32 ino, U8 type);
+
 static erc_t add_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 nlen, U32 ino, U8 type)
 {
 	U32 need = rec_need(nlen), usable = dir_usable(e);
@@ -1177,7 +1282,7 @@ static erc_t add_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 
 	erc_t erc;
 
 	if (i_flags(draw) & FL_INDEX)
-		return ErcNotSupported;			/* htree directory: read only for now */
+		return dx_add(e, dino, draw, name, nlen, ino, type);	/* htree directory */
 	for (l = 0; l < nblk; l++) {
 		U32 off = 0;
 
@@ -1211,22 +1316,17 @@ static erc_t add_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 
 	}
 	/* no room: one more directory block */
 	{
-		U64 goal = 0, start, prev;
-		U32 got, r2;
+		U64 start;
+		U32 lb;
 
-		if (nblk && ext_map(e, draw, (U32)nblk - 1, &prev, &r2) == ErcOk && prev)
-			goal = prev + 1;
-		if ((erc = balloc(e, goal, 1, &start, &got)) ||
-		    (erc = ext_add(e, dino, draw, (U32)nblk, start, 1)))
+		if ((erc = dir_append(e, dino, draw, &lb, &start)))
 			return erc;
-		add_blocks(e, draw, 1);
 		memset(b_dir, 0, e->bs);
 		put32(b_dir, ino);
 		put16(b_dir + 4, usable);
 		b_dir[6] = (U8)nlen;
 		b_dir[7] = type;
 		memcpy(b_dir + 8, name, nlen);
-		set_size(draw, (nblk + 1) * e->bs);
 		dir_tail(e, dino, draw, b_dir);		/* the seed doesn't depend on size: fine */
 		if ((erc = mwr(e, start, b_dir)))
 			return erc;
@@ -1240,8 +1340,8 @@ static erc_t del_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 
 	U32 run, usable = dir_usable(e);
 	erc_t erc;
 
-	if (i_flags(draw) & FL_INDEX)
-		return ErcNotSupported;
+	/* htree directories too: walked linearly, index blocks hold only empty entries (the root:
+	   '.' and '..'; a node: one entry of inode 0), and Linux doesn't shrink the index either */
 	for (l = 0; l < nblk; l++) {
 		U32 off = 0, prev = 0xFFFFFFFF;
 
@@ -1272,6 +1372,420 @@ static erc_t del_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 
 	return ErcNoSuchFile;
 }
 
+/* ---- directories: the htree (dx) index ----
+
+   A directory with FL_INDEX keeps a hash index (Linux makes one for directories bigger than a
+   block). Block 0 is the root: '.' and '..' (rec_len up to the block end), then dx_root_info at
+   0x18 (hash version, indirect levels), then the entries at 0x20: { limit, count, block 0 } and
+   { hash, block } pairs sorted by hash. With indirect levels = 1 each root entry points at an index
+   node (a fake empty dirent, then entries at 8). Leaf blocks are ordinary directory blocks; the
+   names in a leaf hash into [its entry's hash, the next entry's hash). With metadata_csum each
+   index block ends its entry area with a dx_tail (limit is one smaller to make room).
+
+   Inserting follows Linux ext4_dx_add_entry: find the leaf by hash; if the name doesn't fit,
+   split the leaf at the middle (by bytes) of the hash-sorted entries into a new block and insert
+   an index entry for it (bit 0 set when the two halves share a hash); a full index node is split
+   too, and a full root moves its entries into a new node (indirect levels 0 -> 1). Three levels
+   (largedir) are not written: ErcDirFull. Lookups and deletes walk the blocks linearly. */
+
+#define DX_ROOT_COUNT 0x20		/* count/limit offset in the root */
+#define DX_NODE_COUNT 8			/* ... in an index node */
+#define SB_FLAG_UNSIGNED_HASH 0x0002
+
+static U8 b_dx0[MAXBS], b_dx1[MAXBS], b_dx2[MAXBS], b_dir2[MAXBS];
+
+static U32 rol32(U32 v, U32 s) { return v << s | v >> (32 - s); }
+
+static void half_md4(U32 buf[4], const U32 in[8])
+{
+	U32 a = buf[0], b = buf[1], c = buf[2], d = buf[3];
+
+#define F(x, y, z) ((z) ^ ((x) & ((y) ^ (z))))
+#define G(x, y, z) (((x) & (y)) + (((x) ^ (y)) & (z)))
+#define H(x, y, z) ((x) ^ (y) ^ (z))
+#define R(f, a, b, c, d, x, s) (a += f(b, c, d) + (x), a = rol32(a, s))
+	R(F, a, b, c, d, in[0], 3);  R(F, d, a, b, c, in[1], 7);
+	R(F, c, d, a, b, in[2], 11); R(F, b, c, d, a, in[3], 19);
+	R(F, a, b, c, d, in[4], 3);  R(F, d, a, b, c, in[5], 7);
+	R(F, c, d, a, b, in[6], 11); R(F, b, c, d, a, in[7], 19);
+	R(G, a, b, c, d, in[1] + 013240474631U, 3);  R(G, d, a, b, c, in[3] + 013240474631U, 5);
+	R(G, c, d, a, b, in[5] + 013240474631U, 9);  R(G, b, c, d, a, in[7] + 013240474631U, 13);
+	R(G, a, b, c, d, in[0] + 013240474631U, 3);  R(G, d, a, b, c, in[2] + 013240474631U, 5);
+	R(G, c, d, a, b, in[4] + 013240474631U, 9);  R(G, b, c, d, a, in[6] + 013240474631U, 13);
+	R(H, a, b, c, d, in[3] + 015666365641U, 3);  R(H, d, a, b, c, in[7] + 015666365641U, 9);
+	R(H, c, d, a, b, in[2] + 015666365641U, 11); R(H, b, c, d, a, in[6] + 015666365641U, 15);
+	R(H, a, b, c, d, in[1] + 015666365641U, 3);  R(H, d, a, b, c, in[5] + 015666365641U, 9);
+	R(H, c, d, a, b, in[0] + 015666365641U, 11); R(H, b, c, d, a, in[4] + 015666365641U, 15);
+#undef F
+#undef G
+#undef H
+#undef R
+	buf[0] += a;
+	buf[1] += b;
+	buf[2] += c;
+	buf[3] += d;
+}
+
+static void tea(U32 buf[4], const U32 in[4])
+{
+	U32 sum = 0, b0 = buf[0], b1 = buf[1];
+	int n = 16;
+
+	do {
+		sum += 0x9E3779B9;
+		b0 += ((b1 << 4) + in[0]) ^ (b1 + sum) ^ ((b1 >> 5) + in[1]);
+		b1 += ((b0 << 4) + in[2]) ^ (b0 + sum) ^ ((b0 >> 5) + in[3]);
+	} while (--n);
+	buf[0] += b0;
+	buf[1] += b1;
+}
+
+/* str2hashbuf_signed/_unsigned (Linux fs/ext4/hash.c) */
+static void str2hashbuf(const char *msg, int len, U32 *buf, int num, bool uns)
+{
+	U32 pad = (U32)len | ((U32)len << 8), val;
+	int i;
+
+	pad |= pad << 16;
+	val = pad;
+	if (len > num * 4)
+		len = num * 4;
+	for (i = 0; i < len; i++) {
+		val = (U32)(uns ? (int)(U8)msg[i] : (int)(signed char)msg[i]) + (val << 8);
+		if (i % 4 == 3) {
+			*buf++ = val;
+			val = pad;
+			num--;
+		}
+	}
+	if (--num >= 0)
+		*buf++ = val;
+	while (--num >= 0)
+		*buf++ = pad;
+}
+
+/* ext4fs_dirhash: version 0 legacy, 1 half_md4, 2 tea, 3-5 the same with unsigned chars */
+static U32 dx_hash(struct ext4 *e, U32 version, const char *name, U32 nlen)
+{
+	U32 buf[4] = { 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476 }, in[8], hash = 0, i;
+	bool uns = version >= 3;
+	int len = (int)nlen;
+	const char *p = name;
+
+	for (i = 0; i < 4; i++)
+		if (le32(e->sb + 0xEC + 4 * i)) {		/* s_hash_seed, unless all zero */
+			for (i = 0; i < 4; i++)
+				buf[i] = le32(e->sb + 0xEC + 4 * i);
+			break;
+		}
+	switch (version % 3) {
+	case 0: {						/* dx_hack_hash */
+		U32 h0 = 0x12a3fe2d, h1 = 0x37abe8f9, h;
+
+		for (i = 0; i < nlen; i++) {
+			h = h1 + (h0 ^ (U32)((uns ? (int)(U8)name[i] : (int)(signed char)name[i]) * 7152373));
+			if (h & 0x80000000)
+				h -= 0x7fffffff;
+			h1 = h0;
+			h0 = h;
+		}
+		hash = h0 << 1;
+		break;
+	}
+	case 1:
+		for (; len > 0; len -= 32, p += 32) {
+			str2hashbuf(p, len, in, 8, uns);
+			half_md4(buf, in);
+		}
+		hash = buf[1];
+		break;
+	case 2:
+		for (; len > 0; len -= 16, p += 16) {
+			str2hashbuf(p, len, in, 4, uns);
+			tea(buf, in);
+		}
+		hash = buf[0];
+		break;
+	}
+	hash &= ~1U;
+	if (hash == 0xFFFFFFFEU)				/* EXT4_HTREE_EOF_32BIT << 1 */
+		hash = 0xFFFFFFFCU;
+	return hash;
+}
+
+static U32 dx_limit(struct ext4 *e, U32 off)
+{
+	return (e->bs - off) / 8 - (e->csum ? 1 : 0);
+}
+
+/* ext4_dx_csum: over the block up to the last entry, then the tail's reserved word and a zero */
+static void dx_csum(struct ext4 *e, U32 dino, const U8 *draw, U8 *blk, U32 off)
+{
+	U32 limit = le16(blk + off), count = le16(blk + off + 2), c;
+	U8 *t = blk + off + 8 * limit;
+	static const U8 zero[4];
+
+	if (!e->csum || off + 8 * limit + 8 > e->bs)
+		return;
+	put32(t, 0);
+	c = crc32c(ino_seed(e, dino, draw), blk, off + 8 * count);
+	c = crc32c(c, t, 4);
+	c = crc32c(c, zero, 4);
+	put32(t + 4, c);
+}
+
+static U32 dx_ehash(const U8 *blk, U32 off, U32 i) { return i ? le32(blk + off + 8 * i) : 0; }
+static U32 dx_eblk(const U8 *blk, U32 off, U32 i) { return le32(blk + off + 8 * i + 4); }
+
+/* the last entry whose hash is <= h (entry 0 covers everything below entry 1) */
+static U32 dx_find(const U8 *blk, U32 off, U32 h)
+{
+	U32 count = le16(blk + off + 2), i;
+
+	for (i = 1; i < count && dx_ehash(blk, off, i) <= h; i++)
+		;
+	return i - 1;
+}
+
+/* insert { hash, block } at position pos of an index block that has room */
+static void dx_insert(U8 *blk, U32 off, U32 pos, U32 hash, U32 lblk)
+{
+	U32 count = le16(blk + off + 2);
+	U8 *at = blk + off + 8 * pos;
+
+	memmove(at + 8, at, 8 * (count - pos));
+	put32(at, hash);
+	put32(at + 4, lblk);
+	put16(blk + off + 2, count + 1);
+}
+
+static erc_t dx_read(struct ext4 *e, const U8 *draw, U32 lblk, U8 *buf, U64 *pblk)
+{
+	U32 run;
+	erc_t erc;
+
+	if ((erc = ext_map(e, draw, lblk, pblk, &run)))
+		return erc;
+	return *pblk ? brd(e, *pblk, buf) : ErcBrokenFile;
+}
+
+/* entries of a leaf (plus the new one), for the split */
+struct dxent {
+	U32 hash, ino, off;		/* off: in the scratch name area */
+	U8 nlen, type;
+};
+static struct dxent dxe[MAXBS / 12 + 2];
+static char dxnames[MAXBS + 256];
+
+static void dx_sort(struct dxent *a, U32 n)
+{
+	U32 i, j;
+
+	for (i = 1; i < n; i++) {			/* insertion sort: a few hundred at most */
+		struct dxent t = a[i];
+
+		for (j = i; j && a[j - 1].hash > t.hash; j--)
+			a[j] = a[j - 1];
+		a[j] = t;
+	}
+}
+
+static void dx_fill_leaf(struct ext4 *e, U32 dino, const U8 *draw, U8 *blk, U32 from, U32 to)
+{
+	U32 off = 0, i, usable = dir_usable(e);
+
+	memset(blk, 0, e->bs);
+	for (i = from; i < to; i++) {
+		U8 *d = blk + off;
+		U32 rec = i + 1 < to ? rec_need(dxe[i].nlen) : usable - off;
+
+		put32(d, dxe[i].ino);
+		put16(d + 4, rec);
+		d[6] = dxe[i].nlen;
+		d[7] = dxe[i].type;
+		memcpy(d + 8, dxnames + dxe[i].off, dxe[i].nlen);
+		off += rec;
+	}
+	if (from == to)
+		put16(blk + 4, usable);			/* an empty block: one unused entry */
+	dir_tail(e, dino, draw, blk);
+}
+
+static erc_t dx_add(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 nlen, U32 ino, U8 type)
+{
+	U32 version, levels, h, i0, i1 = 0, leaf, n = 0, total = 0, half, m, split, usable = dir_usable(e);
+	U32 node = 0, need = rec_need(nlen), lnew;
+	U64 p0, p1 = 0, pl, pnew;
+	erc_t erc;
+	U8 *nb = b_dx1;				/* the index block that gets the new leaf's entry */
+	U32 noff = DX_ROOT_COUNT, npos;
+	U64 npblk;
+
+	if ((erc = dx_read(e, draw, 0, b_dx0, &p0)))
+		return erc;
+	version = b_dx0[0x1C];
+	levels = b_dx0[0x1E];
+	if (version <= 2 && (le32(e->sb + 0x160) & SB_FLAG_UNSIGNED_HASH))
+		version += 3;
+	if (levels > 1 || b_dx0[0x1D] != 8 || le16(b_dx0 + DX_ROOT_COUNT) != dx_limit(e, DX_ROOT_COUNT))
+		return ErcNotSupported;		/* 3 levels (largedir) or an index we don't know */
+	h = dx_hash(e, version, name, nlen);
+	i0 = dx_find(b_dx0, DX_ROOT_COUNT, h);
+	leaf = dx_eblk(b_dx0, DX_ROOT_COUNT, i0);
+	if (levels == 1) {
+		node = leaf;
+		if ((erc = dx_read(e, draw, node, b_dx1, &p1)))
+			return erc;
+		i1 = dx_find(b_dx1, DX_NODE_COUNT, h);
+		leaf = dx_eblk(b_dx1, DX_NODE_COUNT, i1);
+	}
+	if ((erc = dx_read(e, draw, leaf, b_dir, &pl)))
+		return erc;
+
+	/* the leaf's entries, and room for the name? */
+	{
+		U32 off = 0;
+
+		while (off < usable) {
+			U8 *d = b_dir + off;
+			U32 rec = le16(d + 4), used = le32(d) ? rec_need(d[6]) : 0;
+
+			if (rec < 8 || off + rec > e->bs)
+				return ErcBrokenFile;
+			if (rec - used >= need) {		/* fits: as in a linear directory */
+				U8 *nd = d + used;
+
+				if (used)
+					put16(d + 4, used);
+				put32(nd, ino);
+				put16(nd + 4, rec - used);
+				nd[6] = (U8)nlen;
+				nd[7] = type;
+				memcpy(nd + 8, name, nlen);
+				dir_tail(e, dino, draw, b_dir);
+				return mwr(e, pl, b_dir);
+			}
+			if (le32(d)) {
+				dxe[n].hash = dx_hash(e, version, (const char *)d + 8, d[6]);
+				dxe[n].ino = le32(d);
+				dxe[n].nlen = d[6];
+				dxe[n].type = d[7];
+				dxe[n].off = total;
+				memcpy(dxnames + total, d + 8, d[6]);
+				total += d[6];
+				n++;
+			}
+			off += rec;
+		}
+	}
+	dxe[n].hash = h;
+	dxe[n].ino = ino;
+	dxe[n].nlen = (U8)nlen;
+	dxe[n].type = type;
+	dxe[n].off = total;
+	memcpy(dxnames + total, name, nlen);
+	n++;
+	dx_sort(dxe, n);
+
+	/* split by bytes: the first half keeps about half the space */
+	for (i0 = 0, total = 0; i0 < n; i0++)
+		total += rec_need(dxe[i0].nlen);
+	for (m = 0, half = 0; m < n - 1 && half + rec_need(dxe[m].nlen) <= total / 2; m++)
+		half += rec_need(dxe[m].nlen);
+	if (!m)
+		m = 1;
+	split = dxe[m].hash | (dxe[m].hash == dxe[m - 1].hash ? 1 : 0);	/* continued hash */
+
+	/* the parent index block: the node (2 levels) or the root */
+	i0 = dx_find(b_dx0, DX_ROOT_COUNT, h);
+	if (levels == 1) {
+		noff = DX_NODE_COUNT;
+		npos = i1 + 1;
+		npblk = p1;
+	} else {
+		nb = b_dx0;
+		npos = i0 + 1;
+		npblk = p0;
+	}
+
+	if (le16(nb + noff + 2) == le16(nb + noff)) {	/* the parent is full */
+		U32 nl, cnt;
+		U64 np;
+
+		if (levels == 0) {
+			/* root full: its entries move into a new node, the root points at that node */
+			if ((erc = dir_append(e, dino, draw, &nl, &np)))
+				return erc;
+			memset(b_dx1, 0, e->bs);
+			put16(b_dx1 + 4, e->bs);	/* fake empty dirent covering the block */
+			cnt = le16(b_dx0 + DX_ROOT_COUNT + 2);
+			memcpy(b_dx1 + DX_NODE_COUNT, b_dx0 + DX_ROOT_COUNT, 8 * cnt);
+			put16(b_dx1 + DX_NODE_COUNT, dx_limit(e, DX_NODE_COUNT));
+			put16(b_dx0 + DX_ROOT_COUNT + 2, 1);
+			put32(b_dx0 + DX_ROOT_COUNT + 4, nl);
+			b_dx0[0x1E] = 1;
+			levels = 1;
+			nb = b_dx1;
+			noff = DX_NODE_COUNT;
+			npblk = np;
+			node = nl;
+			i0 = 0;
+		} else {
+			/* node full: split it; its upper half goes into a new node after it in the root */
+			U32 half2, sh;
+
+			if (le16(b_dx0 + DX_ROOT_COUNT + 2) == le16(b_dx0 + DX_ROOT_COUNT))
+				return ErcDirFull;		/* would need a third level */
+			if ((erc = dir_append(e, dino, draw, &nl, &np)))
+				return erc;
+			cnt = le16(b_dx1 + DX_NODE_COUNT + 2);
+			half2 = cnt / 2;
+			sh = dx_ehash(b_dx1, DX_NODE_COUNT, half2);
+			memset(b_dx2, 0, e->bs);
+			put16(b_dx2 + 4, e->bs);
+			put16(b_dx2 + DX_NODE_COUNT, dx_limit(e, DX_NODE_COUNT));
+			put16(b_dx2 + DX_NODE_COUNT + 2, cnt - half2);
+			put32(b_dx2 + DX_NODE_COUNT + 4, dx_eblk(b_dx1, DX_NODE_COUNT, half2));
+			memcpy(b_dx2 + DX_NODE_COUNT + 8, b_dx1 + DX_NODE_COUNT + 8 * (half2 + 1),
+			       8 * (cnt - half2 - 1));
+			put16(b_dx1 + DX_NODE_COUNT + 2, half2);
+			dx_insert(b_dx0, DX_ROOT_COUNT, i0 + 1, sh, nl);
+			if (npos > half2) {		/* the new leaf's entry goes into the new node */
+				dx_csum(e, dino, draw, b_dx1, DX_NODE_COUNT);
+				if ((erc = mwr(e, p1, b_dx1)))
+					return erc;
+				memcpy(b_dx1, b_dx2, e->bs);
+				npos -= half2;
+				npblk = np;
+			} else {
+				dx_csum(e, dino, draw, b_dx2, DX_NODE_COUNT);
+				if ((erc = mwr(e, np, b_dx2)))
+					return erc;
+			}
+			nb = b_dx1;
+		}
+	}
+
+	/* the new leaf: upper half of the entries */
+	if ((erc = dir_append(e, dino, draw, &lnew, &pnew)))
+		return erc;
+	dx_fill_leaf(e, dino, draw, b_dir, 0, m);
+	dx_fill_leaf(e, dino, draw, b_dir2, m, n);
+	if ((erc = mwr(e, pl, b_dir)) || (erc = mwr(e, pnew, b_dir2)))
+		return erc;
+	dx_insert(nb, noff, npos, split, lnew);
+	dx_csum(e, dino, draw, nb, noff);
+	if ((erc = mwr(e, npblk, nb)))
+		return erc;
+	if (nb != b_dx0) {
+		dx_csum(e, dino, draw, b_dx0, DX_ROOT_COUNT);
+		if ((erc = mwr(e, p0, b_dx0)))
+			return erc;
+	}
+	(void)node;
+	return iput(e, dino, draw);
+}
+
 static erc_t set_dotdot(struct ext4 *e, U32 dino, const U8 *draw, U32 parent)
 {
 	U64 pblk;
@@ -1287,7 +1801,10 @@ static erc_t set_dotdot(struct ext4 *e, U32 dino, const U8 *draw, U32 parent)
 			return ErcBrokenFile;
 		put32(dd, parent);
 	}
-	dir_tail(e, dino, draw, b_dir);
+	if (i_flags(draw) & FL_INDEX)
+		dx_csum(e, dino, draw, b_dir, DX_ROOT_COUNT);	/* block 0 is the htree root */
+	else
+		dir_tail(e, dino, draw, b_dir);
 	return mwr(e, pblk, b_dir);
 }
 
@@ -1336,8 +1853,6 @@ static erc_t e4_create(const char *path, U32 len, U8 attr, struct fnode *n)
 		return ErcDupName;
 	if (erc != ErcNoSuchFile)
 		return erc;
-	if (i_flags(draw) & FL_INDEX)
-		return ErcNotSupported;
 	if ((erc = ialloc(e, isdir, &ino)))
 		return erc;
 

@@ -41,6 +41,8 @@ next steps. Keep it factual and include file:line references and commit hashes.
 | `port64/` | DOORS 64-bit (see below). |
 | `devman/` | DOORS System Manual (Markdown, 11 chapters). Update it when commands, calls, error codes, limits or tools change. |
 | `CHANGELOG.md` | DOORS version history. |
+| `ROADMAP.md` | The way from 1.x to a stable OS: stages, steps and the test that proves each one. |
+| `PROBLEM-SOLN.md` | PROBLEMS.TXT side by side with what DOORS has solved. |
 
 ## Original build (32-bit, under DOS)
 
@@ -187,8 +189,9 @@ make debug    # QEMU waits for gdb on :1234
   `MSAMPLES/CLI/CLI.C` (the original stays untouched; its header lists every change). File names without a
   drive are relative to the job's path (`build_spec` in `kernel/fsys.c`).
 - Disks and files: `make test` builds `build/disk-test.img` (tools/mkdisk.py: MBR + FAT32 C:, FAT16 D:,
-  FAT12 E:, ext4 F:) and afterwards `tools/check_disk.py` verifies it with `fsck.fat`/mtools and
-  `e2fsck -fn`/`debugfs`. `make run` uses
+  FAT12 E:, ext4 F:) and `build/disk2-test.img` (`--disk2`: GPT, 1K-block ext4 G: with htree directories made
+  by `e2fsck -D`), and afterwards `tools/check_disk.py` verifies both with `fsck.fat`/mtools and
+  `e2fsck -fn`/`debugfs`. Note: `debugfs ls -p` also lists unused entries (inode 0); skip them. `make run` uses
   `build/disk.img` (kept between runs; delete it for a fresh one).
 - File calls go through the FILESYS service (`kernel/fsys.c`) and keep MMURTL's names and modes. A request's
   receive buffers (index ≥ npSend) must be writable in the requester's space; `rqb_received` checks this, so

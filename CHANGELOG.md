@@ -12,6 +12,19 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.2.0 — 2026-10-18 — M8b: writing big (htree) directories
+- **htree directory writes:** names go into Linux's hash-indexed directories through the index:
+  half_md4/tea/legacy hashes (signed and unsigned), leaf splits, index node splits, a full root
+  becoming two levels, and the dx_tail checksum. Deletes and moves work in indexed directories too.
+  Three-level (largedir) indexes are read but give `ErcDirFull` on write.
+- **Uninitialised block groups** (`BLOCK_UNINIT`, `INODE_UNINIT`): their bitmaps are built on
+  first use (as Linux does), so a fresh mkfs volume can be filled completely.
+- **Second test disk:** a GPT disk with a 1K-block ext4 volume (G:) holding Linux-indexed
+  directories (one and two levels). It is the first test of DOORS's GPT support, and it passes.
+  check_disk runs `e2fsck -fn` on it and compares every name.
+- Test fixes: check_disk and powercut.py ignore unused directory entries (inode 0) that `debugfs
+  ls -p` lists.
+
 ## 1.1.0 — 2026-10-16 — M8b: the ext4 journal
 - **Journaled ext4 writes** (JBD2, ordered mode): every modifying file operation is one
   transaction. Metadata goes through the journal; file data goes to disk first.

@@ -62,8 +62,8 @@ Finished and covered by automatic tests:
 
 Not yet available (see [chapter 11](11-limits.md)):
 
-- htree directory writes, deeper extent trees on write, and booting from an ext4 system disk (M8b).
-  The ext4 journal is done (1.1.0).
+- Deeper extent trees on write and booting from an ext4 system disk (M8b).
+  The ext4 journal (1.1.0) and htree directory writes (1.2.0) are done.
 - The debugger and the other calls that still return `ErcBadCallGate`.
 
 Done in M9: per-job screens and the keyboard service (0.9.0), the job calls (`Chain`, exit run
