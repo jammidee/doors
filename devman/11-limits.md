@@ -37,7 +37,7 @@
 | Keyboard LEDs (Caps/Num/Scroll Lock lights) | not driven; the lock states work | later |
 | Global key requests from programs (MMURTL's debugger keys) | only Ctrl-Alt-PgDn and Ctrl-Alt-Del are handled | M10 |
 | ext4 directories with a 3-level htree index (`largedir`); files whose extent tree is 5 levels deep | writing gives `ErcDirFull` / `ErcBrokenFile`; reading works (1–2 index levels and extent trees up to depth 4 are written) | later |
-| Booting from an ext4 system disk | programs come from the boot image or a path | M8b/M9 |
+| Putting DOORS on a real disk | the ext4 system disk is made by `mkdisk.py --system ext4` as an image (BIOS boot, MBR); there is no installer, and no UEFI boot yet | ROADMAP 7.4, 4.7 |
 | Debugger, disassembler | not ported (job 2 is reserved for it) | M10 |
 | `malloc` and a full C library for programs | only `AllocPage` and a small libc | M9 |
 | Disk drivers | ATA PIO only; no AHCI/virtio, no interrupt-driven I/O | later |

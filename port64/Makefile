@@ -4,7 +4,9 @@
 #   make            build build/kernel.elf and build/doors.iso
 #   make run        boot in QEMU (window; serial log on this terminal)
 #   make console    boot in QEMU drawn in this terminal (curses); used by doors.bat
-#   make smoke      docs/SMOKE_TEST.md on 64-bit: CLI, editor, samples driven by typed keys (tools/smoke64.py)
+#   make run-ext4   boot from build/sysdisk.img: GRUB on the disk, C: = ext4 system volume, no ISO
+#   make smoke      docs/SMOKE_TEST.md on 64-bit: CLI, editor, samples driven by typed keys (tools/smoke64.py),
+#                   on the FAT32 system disk (booted from the ISO) and on the ext4 one (booted from the disk)
 #   make powercut   kill QEMU during journaled ext4 writes, check replay + e2fsck (tools/powercut.py)
 #   make fuzz       damaged FAT/ext4 disks against the kernel's file system code, built for Linux
 #                   with sanitizers (tests/fsfuzz); FUZZ_N damaged images per disk and build
@@ -122,7 +124,7 @@ TEST_ARGS := \
 	--send "M9: type ed3=Edited in DOORS{alt-s}{alt-q}" \
 	--send "M9: type cli3=dir C:\T9\nexit\n"
 
-.PHONY: all run console test smoke powercut fuzz debug clean FORCE
+.PHONY: all run run-ext4 console test smoke powercut fuzz debug clean FORCE
 # Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
 .SECONDARY:
 
@@ -228,6 +230,15 @@ MKDISK_ARGS = --hello $(BUILD)/user/hello.elf --progs $(BUILD)/user --sys user/s
 $(DISK): $(USER_ELFS) $(wildcard user/sys/*) tools/mkdisk.py
 	python3 tools/mkdisk.py $@ $(MKDISK_ARGS)
 
+# An ext4 system disk that boots by itself (no ISO): GRUB in the MBR, C: = ext4 with /boot and \DOORS\
+# (ROADMAP 1.6). Made from the normal ISO's /boot tree; `make run-ext4` boots it (kept between runs).
+SYSDISK := $(BUILD)/sysdisk.img
+$(SYSDISK): $(ISO) tools/mkdisk.py
+	python3 tools/mkdisk.py $@ --system ext4 --boot $(ISO).d/boot $(MKDISK_ARGS)
+
+run-ext4: $(SYSDISK)
+	$(QEMU) $(QEMU_BASE) -name DOORS -drive file=$(SYSDISK),format=raw,if=ide,index=0 -boot c -serial stdio $(QEMU_EXTRA)
+
 run: $(ISO) $(DISK)
 	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio $(QEMU_EXTRA)
 
@@ -241,7 +252,7 @@ debug: $(ISO) $(DISK)
 	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio -s -S $(QEMU_EXTRA)
 
 test: $(TEST_ISO) $(USER_ELFS)
-	python3 tools/mkdisk.py $(TEST_DISK) $(MKDISK_ARGS) --disk2 $(TEST_DISK2)
+	python3 tools/mkdisk.py $(TEST_DISK) $(MKDISK_ARGS) --damage --disk2 $(TEST_DISK2)
 	python3 tools/qemu_test.py --iso $(TEST_ISO) --disk $(TEST_DISK) --disk2 $(TEST_DISK2) \
 		--log $(BUILD)/serial.log --timeout $(TEST_TIMEOUT) $(TEST_ARGS)
 	python3 tools/check_disk.py $(TEST_DISK) $(TEST_DISK2) --log $(BUILD)/serial.log
@@ -281,6 +292,7 @@ fuzz: $(BUILD)/host/fsfuzz $(BUILD)/host/fsfuzz-stk $(FUZZ_DISKS)
 # docs/SMOKE_TEST.md on the normal ISO: types into a CLI and reads the screen (tools/smoke64.py)
 smoke: $(ISO) $(USER_ELFS)
 	python3 tools/smoke64.py
+	python3 tools/smoke64.py --ext4
 
 clean:
 	rm -rf $(BUILD)

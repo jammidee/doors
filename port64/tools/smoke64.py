@@ -21,6 +21,7 @@ from qscreen import mon, screen, text_keys  # noqa: E402
 
 SOCK = "/tmp/doors-smoke64.mon"
 DISK = "/tmp/doors-smoke64.img"
+EXT4 = False                    # --ext4: C: is an ext4 system disk that boots by itself
 results = []
 
 
@@ -139,8 +140,11 @@ def memory():
 
 def fs_init():
     s = scr()
-    for v in ("Volume C: disk 12 part 1, 40 MB, FAT32", "Volume D: disk 12 part 2, 16 MB, FAT16",
-              "Volume E: disk 12 part 3, 4 MB, FAT12", "Volume F: disk 12 part 4, 64 MB, ext4"):
+    vols = (("Volume C: disk 12 part 1, 64 MB, ext4 DOORS-SYS", "Volume D: disk 12 part 2, 16 MB, FAT16")
+            if EXT4 else
+            ("Volume C: disk 12 part 1, 40 MB, FAT32", "Volume D: disk 12 part 2, 16 MB, FAT16",
+             "Volume E: disk 12 part 3, 4 MB, FAT12", "Volume F: disk 12 part 4, 64 MB, ext4"))
+    for v in vols:
         assert v in s, f"missing {v!r}"
 
 
@@ -214,6 +218,12 @@ def path():
 
 
 def lowercase():
+    if EXT4:            # ext4 names are case-sensitive (devman 6); the drive letter is not
+        cli("dir c:\\msamples", ("READ.ME", "doesn't exist"))
+        assert "doesn't exist" in scr(), "ext4 found a name in the wrong case"
+        cli("dir c:\\MSAMPLES", ("READ.ME", "doesn't exist"))
+        assert "READ.ME" in scr(), "lower-case drive letter not accepted"
+        return
     cli("dir c:\\msamples", ("READ.ME", "doesn't exist"))
     assert "READ.ME" in scr(), "lower-case path not found"
 
@@ -324,10 +334,40 @@ def monitor_and_exit():
     assert not re.search(r"Job  4 .*running", s), "CLI job 4 still running after exit"
 
 
+def ext4_after():
+    """After the session (QEMU quit, no sync): C: must be clean for Linux, with the files the rows
+    wrote, and GRUB must still boot DOORS from it."""
+    sys.path.insert(0, HERE)
+    from mkdisk import SYS_PARTS, SEC
+    c = "/tmp/doors-smoke64-c.img"
+    with open(DISK, "rb") as f, open(c, "wb") as o:
+        f.seek(SYS_PARTS[0][0] * SEC)
+        o.write(f.read(SYS_PARTS[0][1] * SEC))
+    r = subprocess.run(["e2fsck", "-fn", c], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    assert r.returncode == 0, "e2fsck: " + " | ".join(r.stdout.decode(errors="replace").splitlines()[-3:])
+    out = subprocess.run(["debugfs", "-R", "ls /", c], stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL).stdout.decode()
+    assert "EDITED.TXT" in out and "SMOKE" in out, "the files the smoke rows wrote are missing"
+    os.remove(c)
+    log2 = LOG + ".2"
+    if os.path.exists(log2):
+        os.remove(log2)
+    q = subprocess.Popen(["qemu-system-x86_64", "-m", "256M", "-display", "none", "-no-reboot",
+                          "-drive", f"file={DISK},format=raw,if=ide,index=0", "-boot", "c",
+                          "-serial", "file:" + log2], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    end, ok = time.time() + 60, False
+    while time.time() < end and q.poll() is None and not ok:
+        time.sleep(0.5)
+        ok = os.path.exists(log2) and "Type 'help' for commands" in open(log2, errors="replace").read()
+    q.kill()
+    q.wait()
+    assert ok, "the second boot failed"
+
+
 ROWS = [
     ("B1", "boot to the monitor, clock and ticks, drivers", boot),
     ("B2", "memory detection", memory),
-    ("B4", "file system init (C: FAT32, D: FAT16, E: FAT12, F: ext4)", fs_init),
+    ("B4", "file system init (the system disk's volumes)", fs_init),
     ("B5", "F1 LdCLI", ldcli),
     ("F1", "dir (C:\\DOORS)", dir_sys),
     ("F2", "dir C:\\ and C:\\MSAMPLES", dir_c),
@@ -338,7 +378,7 @@ ROWS = [
     ("F6b", "del", delete),
     ("F7", "rd (hung MMURTL)", rd),
     ("F8", "path", path),
-    ("F9", "lower-case paths", lowercase),
+    ("F9", "lower-case paths (ext4: case-sensitive)", lowercase),
     ("F10", "dump (ASCII column)", dump),
     ("F10b", "undel no longer advertised", undel),
     ("P1", "help", help_),
@@ -357,21 +397,32 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--keep", action="store_true", help="leave the VM running afterwards")
     ap.add_argument("--only", help="comma-separated rows (B1 and B5 always run), e.g. P2,P4")
+    ap.add_argument("--ext4", action="store_true",
+                    help="boot from an ext4 system disk (mkdisk --system ext4: GRUB on the disk, no ISO)")
     a = ap.parse_args()
     only = set(a.only.split(",")) | {"B1", "B5"} if a.only else None
+    global EXT4
+    EXT4 = a.ext4
+    print("smoke test on the " + ("ext4 system disk (booted from the disk)" if EXT4 else
+                                  "FAT32 system disk (booted from the ISO)"), flush=True)
 
-    iso = "/tmp/doors-smoke64.iso"          # a local copy: reads from /mnt/* can be slow
-    shutil.copyfile(os.path.join(PORT, "build", "doors.iso"), iso)
-    subprocess.run([sys.executable, os.path.join(HERE, "mkdisk.py"), DISK,
-                    "--hello", os.path.join(PORT, "build", "user", "hello.elf"),
-                    "--progs", os.path.join(PORT, "build", "user"),
-                    "--sys", os.path.join(PORT, "user", "sys")], check=True, stdout=subprocess.DEVNULL)
+    args = ["--hello", os.path.join(PORT, "build", "user", "hello.elf"),
+            "--progs", os.path.join(PORT, "build", "user"), "--sys", os.path.join(PORT, "user", "sys")]
+    if EXT4:
+        args += ["--system", "ext4", "--boot", os.path.join(PORT, "build", "doors.iso.d", "boot")]
+        boot = ["-boot", "c"]
+    else:
+        iso = "/tmp/doors-smoke64.iso"      # a local copy: reads from /mnt/* can be slow
+        shutil.copyfile(os.path.join(PORT, "build", "doors.iso"), iso)
+        boot = ["-cdrom", iso, "-boot", "d"]
+    subprocess.run([sys.executable, os.path.join(HERE, "mkdisk.py"), DISK] + args, check=True,
+                   stdout=subprocess.DEVNULL)
     for p in (SOCK, LOG):
         if os.path.exists(p):
             os.remove(p)
-    qemu = subprocess.Popen(["qemu-system-x86_64", "-m", "256M", "-display", "none", "-cdrom", iso,
-                             "-drive", f"file={DISK},format=raw,if=ide,index=0", "-boot", "d",
-                             "-serial", "file:" + LOG, "-monitor", f"unix:{SOCK},server,nowait"],
+    qemu = subprocess.Popen(["qemu-system-x86_64", "-m", "256M", "-display", "none",
+                             "-drive", f"file={DISK},format=raw,if=ide,index=0"] + boot +
+                            ["-serial", "file:" + LOG, "-monitor", f"unix:{SOCK},server,nowait"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         end = time.time() + 30
@@ -397,6 +448,9 @@ def main():
                 qemu.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 qemu.kill()
+
+    if EXT4:
+        check("B8", "the system disk DOORS wrote: e2fsck clean, and it boots again", ext4_after)
 
     counts = {k: sum(1 for r in results if r[2] == k) for k in ("PASS", "FAIL", "DEFERRED")}
     print("\n" + "  ".join(f"{k} {v}" for k, v in counts.items()))

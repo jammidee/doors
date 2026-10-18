@@ -59,11 +59,12 @@ Finished and covered by automatic tests:
   a faulting job without harming the system, job cleanup without leaks.
 - ATA disks, MBR/GPT partitions, a block cache, FAT12/16/32 with long names, and ext4 (read
   and write, with the journal: power-cut safe). Both are reached through the MMURTL file API.
+- Booting from the ISO or from a disk by itself, with the system volume C: on FAT32 or on ext4
+  (1.7.0; M8b is done: the journal, htree directories, deep extent trees, journal checksums and
+  the ext4 system disk).
 
 Not yet available (see [chapter 11](11-limits.md)):
 
-- Booting from an ext4 system disk (M8b). The ext4 journal (1.1.0), htree directory writes
-  (1.2.0), deep extent trees on write (1.3.0) and journals with checksums (1.4.0) are done.
 - The debugger and the other calls that still return `ErcBadCallGate`.
 
 Done in M9: per-job screens and the keyboard service (0.9.0), the job calls (`Chain`, exit run

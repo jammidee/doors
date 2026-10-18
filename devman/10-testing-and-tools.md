@@ -73,7 +73,14 @@ command (`dir`, `type`, `md`, `copy`, `ren`, `del`, `rd`, `path`, `dump`), `help
 a long path), the NUMBERS service across two CLIs, the monitor's F2/F3, Ctrl-Alt-PgDn, BusyLoop +
 Ctrl-Alt-Del, `monitor` and `exit`. It ends with `PASS n  FAIL n  DEFERRED n` and exits non-zero on a
 failure. `--only F5,P2` runs just those rows (plus boot and LdCLI); `--keep` leaves the VM running.
-It takes about 1.5 minutes. 1.0.0: 24 PASS, 1 DEFERRED (the debugger, M10).
+1.0.0: 24 PASS, 1 DEFERRED (the debugger, M10).
+
+`make smoke` runs it twice. The second run, `smoke64.py --ext4`, boots from an ext4 system disk
+(`mkdisk.py --system ext4`: GRUB on the disk, no ISO) and runs the same rows on it. Two of them
+differ there on purpose: B4 expects C: = ext4 and D: = FAT16, and F9 expects case-sensitive names.
+A last row, B8, checks the disk afterwards: `e2fsck -fn` must find C: clean with the files the rows
+wrote, and the disk must boot again. Both runs together take about 3 minutes (1.7.0: 24 PASS and 25
+PASS, 1 DEFERRED each).
 
 ## `make powercut`: power cuts during ext4 and FAT writes
 

@@ -44,7 +44,7 @@ Each milestone has a demo (what you'll see) and acceptance checks (what must pas
 | M6 | **User mode & jobs** ✅ | Ring-3 ELF "hello" job started from `INITIAL.JOB` | Bad pointers return errors (no kernel crash); jobs exit and free all memory |
 | M7 | **Disks & FAT** ✅ | `dir` of a FAT image from a test job | Read/write FAT12/16/32 matches host `mtools` view of the same image |
 | M8 | **ext4** ✅ | ext4 volume read/write; long names; >4 GB file | Random stress test (new seed each `make test`), then host `e2fsck -fn` reports clean ✅ |
-| M8b | **ext4 journal & root** (journal ✅ 1.1.0, htree ✅ 1.2.0, deep extents ✅ 1.3.0, journal checksums ✅ 1.4.0) | jbd2 replay + journaled writes ✅; htree directory writes ✅; deep extent trees on write ✅; csum_v3 journals written ✅; boot from an ext4 system disk | Power-cut test (kill QEMU mid-write), then replay and `e2fsck -fn` clean ✅ (`make powercut`) |
+| M8b | **ext4 journal & root** ✅ (journal 1.1.0, htree 1.2.0, deep extents 1.3.0, journal checksums 1.4.0, system disk 1.7.0) | jbd2 replay + journaled writes ✅; htree directory writes ✅; deep extent trees on write ✅; csum_v3 journals written ✅; boot from an ext4 system disk ✅ (`make run-ext4`, `make smoke` on it) | Power-cut test (kill QEMU mid-write), then replay and `e2fsck -fn` clean ✅ (`make powercut`) |
 | M9 | **User land** ✅ (1.0.0) | Monitor + CLI + editor running on 64-bit | `docs/SMOKE_TEST.md` passes on 64-bit, same as on 32-bit ✅ (24 pass, P7 debugger moved to M10) |
 | M10 | **Optional** | — | Debugger/disassembler, 64-bit CM32/DASM, UEFI, APIC, SMP |
 

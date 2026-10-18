@@ -14,7 +14,9 @@
    - The command file is closed after it is searched (MMURTL left it open each time).
    - Debug says the debugger isn't there yet (INT 3 in ring 3 would end the job); Monitor just shows
      the monitor's screen (DOORS has no KEYBOARD service: the keyboard follows the screen).
-   - The job number no longer writes a NUL into the status line. */
+   - The job number no longer writes a NUL into the status line.
+   - A command finds its run file in any case (as typed, then upper-cased: OpenRunFile), so
+     "edit" runs EDIT.ELF on a case-sensitive ext4 system disk too. */
 
 #include "doors.h"
 #include <ctype.h>
@@ -685,6 +687,21 @@ char fdone;
   (DOORS: .ELF files.)
 ***************************************************/
 
+/* DOORS: open dir+name+".ELF" as typed, else with the name upper-cased (the system programs are
+   upper-case, and ext4 names are case-sensitive: "edit" finds C:\DOORS\EDIT.ELF there too). */
+static U32 OpenRunFile(char *runfile, U32 dirlen, U32 *pfh)
+{
+U32 erc, i;
+
+	erc = OpenFile(runfile, strlen(runfile), ModeRead, 1, pfh);
+	if (erc) {
+		for (i = dirlen; runfile[i]; i++)
+			runfile[i] = toupper((unsigned char)runfile[i]);
+		erc = OpenFile(runfile, strlen(runfile), ModeRead, 1, pfh);
+	}
+	return erc;
+}
+
 void FindRunFile(void)
 {
 char runfile[80];
@@ -696,7 +713,7 @@ U32 i, erc, fh;
 	runfile[acbParam[0]] = 0;
 	strcat(runfile, ".ELF");
 
-	erc = OpenFile(runfile, strlen(runfile), ModeRead, 1, &fh);
+	erc = OpenRunFile(runfile, 0, &fh);
 	if (!erc)
 	{			/* found a run file in sys directory */
 		CloseFile(fh);
@@ -710,7 +727,7 @@ U32 i, erc, fh;
 		CopyData(apParam[0], &runfile[i], acbParam[0]);
 		runfile[acbParam[0]+i] = 0; /* null terminate */
 		strcat(runfile, ".ELF");
-		erc = OpenFile(runfile, strlen(runfile), ModeRead, 1, &fh);
+		erc = OpenRunFile(runfile, i, &fh);
 		if (!erc)
 		{			/* found a run file */
 			CloseFile(fh);

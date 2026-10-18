@@ -230,8 +230,10 @@ Steps:
       uninitialised block groups built on first use. Tested on a GPT disk with Linux-indexed directories.
 - [x] Deeper extent trees on write (1.3.0, ROADMAP step 1.2): any depth up to 4, with leaf and index
       splits, root growth and truncation that frees emptied nodes. Tested with a 480-extent depth-2 file.
-- [~] Image tool: `tools/mkdisk.py` adds an ext4 partition (F:) built with `mkfs.ext4 -d`. An ext4 *system*
-      disk holding the `MMSYS` contents, booted from, comes in M8b/M9.
+- [x] Image tool: `tools/mkdisk.py` adds an ext4 partition (F:) built with `mkfs.ext4 -d`. The ext4 *system*
+      disk (1.7.0, ROADMAP 1.6): `mkdisk.py --system ext4` makes C: = ext4 with `/boot` and `\DOORS\`, GRUB
+      installed by hand (boot.img's code in the MBR, core.img from grub-mkimage in the first track), and
+      D: FAT16; it boots without the ISO and passes `make smoke`.
 - [x] Test suite: M8 self-tests (read, write, a 5 GB sparse file, long and case-different names, rename,
       move, truncate, delete) plus a random stress test of 400 operations against a model of the expected
       file contents, with a new seed every run. Afterwards `tools/check_disk.py` runs `e2fsck -fn` and checks

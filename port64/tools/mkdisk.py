@@ -4,7 +4,10 @@
 mkfs.fat and mtools, so the kernel's FAT code is checked against an independent implementation.
 
   python3 tools/mkdisk.py OUT.img [--hello build/user/hello.elf] [--progs build/user] [--sys user/sys]
-                          [--plain-journal] [--disk2 OUT2.img]
+                          [--plain-journal] [--damage] [--disk2 OUT2.img]
+  --damage leaves E: as after a crash (damage_fat12; `make test` checks DOORS's report of it)
+  python3 tools/mkdisk.py OUT.img --system ext4 --boot build/doors.iso.d/boot [--hello ...] [--progs ...]
+                          [--sys ...]     a disk that boots by itself, C: = ext4 (see make_sysdisk)
 
 F:'s journal has CRC32C checksums (csum_v3), as e2fsprogs 1.47 makes it and Linux's mount sets it
 on metadata_csum volumes; --plain-journal leaves it without checksums (as e2fsprogs 1.46 makes it).
@@ -21,7 +24,7 @@ Files:
   C:\\MSAMPLES\\READ.ME          MMURTL's sample READ.ME (smoke test)
   D:\\README.TXT, E:\\TINY.TXT
 """
-import os, struct, subprocess, sys, tempfile
+import os, shutil, struct, subprocess, sys, tempfile
 
 SEC = 512
 PARTS = [  # (start, sectors, mbr type, fat bits, label)
@@ -217,12 +220,84 @@ def opt(name):
     return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
 
 
+# ---- an ext4 system disk that boots by itself (ROADMAP 1.6: --system ext4 --boot DIR) ----
+# MBR with GRUB, C: ext4 (the system: /boot with the kernel, modules and GRUB's files, \DOORS\,
+# \MSAMPLES\), D: FAT16 for exchanging files. GRUB is installed as grub-bios-setup would do it, by
+# hand (no loop devices in WSL): boot.img's code (bytes 0..0x1B7, not its tail, which would overlap
+# the partition table) in the MBR, with the sector of core.img at 0x5C; core.img (grub-mkimage with
+# biosdisk, part_msdos, ext2 and prefix (hd0,msdos1)/boot/grub) in the gap before partition 1.
+# grub-mkimage already writes core.img's own length into its first sector's block list.
+SYS_PARTS = [(2048, 131072, 0x83), (133120, 32768, 0x06)]      # C: ext4 64 MB, D: FAT16 16 MB
+GRUB_DIR = "/usr/lib/grub/i386-pc"
+
+
+def make_sysdisk(out, boot, progs, sysdir, hello, repo, tmp):
+    tree = os.path.join(tmp, "sysroot")
+    shutil.copytree(boot, os.path.join(tree, "boot"))
+    gmods = os.path.join(tree, "boot", "grub", "i386-pc")
+    os.makedirs(gmods, exist_ok=True)
+    for f in os.listdir(GRUB_DIR):
+        if f.endswith((".mod", ".lst")):
+            shutil.copy(os.path.join(GRUB_DIR, f), gmods)
+    os.makedirs(os.path.join(tree, "DOORS"))
+    for d_, pat_ in ((sysdir, None), (progs, ".elf")):
+        if d_:
+            for name in sorted(os.listdir(d_)):
+                p_ = os.path.join(d_, name)
+                if os.path.isfile(p_) and (pat_ is None or name.endswith(pat_)):
+                    shutil.copy(p_, os.path.join(tree, "DOORS", name.upper()))
+    os.makedirs(os.path.join(tree, "MSAMPLES"))
+    readme = os.path.join(repo, "MSAMPLES", "READ.ME")
+    if os.path.exists(readme):
+        shutil.copy(readme, os.path.join(tree, "MSAMPLES", "READ.ME"))
+    os.makedirs(os.path.join(tree, "BIN"))
+    if hello:
+        shutil.copy(hello, os.path.join(tree, "BIN", "HELLO.ELF"))
+    with open(os.path.join(tree, "HELLO.TXT"), "wb") as f:
+        f.write(b"Hello from the ext4 system disk.\n")
+
+    c, d = os.path.join(tmp, "c.img"), os.path.join(tmp, "d.img")
+    for p, (start, n, _) in ((c, SYS_PARTS[0]), (d, SYS_PARTS[1])):
+        with open(p, "wb") as f:
+            f.truncate(n * SEC)
+    run("mkfs.ext4", "-q", "-F", "-T", "default", "-b", "4096", "-I", "256", "-L", "DOORS-SYS", "-d", tree, c)
+    run("mkfs.fat", "-F", "16", "-n", "DOORSXCH", "-h", str(SYS_PARTS[1][0]), "-S", "512", d)
+    put(d, README_TXT, "README.TXT", tmp)
+    core = os.path.join(tmp, "core.img")
+    run("grub-mkimage", "-O", "i386-pc", "-o", core, "-p", "(hd0,msdos1)/boot/grub",
+        "biosdisk", "part_msdos", "ext2")
+    core_b = open(core, "rb").read()
+    if len(core_b) > (SYS_PARTS[0][0] - 1) * SEC:
+        raise SystemExit("mkdisk: GRUB's core.img doesn't fit before partition 1")
+
+    mbr = bytearray(SEC)
+    mbr[:0x1B8] = open(os.path.join(GRUB_DIR, "boot.img"), "rb").read()[:0x1B8]
+    struct.pack_into("<Q", mbr, 0x5C, 1)        # core.img starts at LBA 1
+    for i, (start, n, typ) in enumerate(SYS_PARTS):
+        mbr[446 + 16 * i:462 + 16 * i] = struct.pack("<B3sB3sII", 0x80 if i == 0 else 0, b"\xfe\xff\xff",
+                                                     typ, b"\xfe\xff\xff", start, n)
+    mbr[510:512] = b"\x55\xaa"
+    end = SYS_PARTS[-1][0] + SYS_PARTS[-1][1]
+    with open(out, "wb") as f:
+        f.truncate((end + 2048) * SEC)
+        f.write(mbr)
+        f.write(core_b)
+        for (start, _, _), p in zip(SYS_PARTS, (c, d)):
+            f.seek(start * SEC)
+            f.write(open(p, "rb").read())
+
+
 def main():
     out = sys.argv[1]
     hello = opt("--hello")
     progs = opt("--progs")      # build/user: every NAME.elf goes to C:\DOORS\NAME.ELF
     sysdir = opt("--sys")       # user/sys: HELP.CLI, COMMANDS.CLI go to C:\DOORS\
     repo = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..")
+    if opt("--system") == "ext4":
+        with tempfile.TemporaryDirectory() as tmp:
+            make_sysdisk(out, opt("--boot"), progs, sysdir, hello, repo, tmp)
+        print(out)
+        return
     disk2 = opt("--disk2")      # also build the second test disk (GPT, 1K-block ext4 with htrees)
     if disk2:
         with tempfile.TemporaryDirectory() as tmp:
@@ -258,7 +333,8 @@ def main():
             put(c, open(readme, "rb").read(), "MSAMPLES/READ.ME", tmp)
         put(d, README_TXT, "README.TXT", tmp)
         put(e, TINY_TXT, "TINY.TXT", tmp)
-        damage_fat12(e, tmp, False)
+        if "--damage" in sys.argv:              # make test only: E: as after a crash
+            damage_fat12(e, tmp, False)
 
         # F: ext4 with Linux's default features, filled from a directory tree
         tree = os.path.join(tmp, "ext4root")

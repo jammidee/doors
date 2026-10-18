@@ -12,6 +12,19 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.7.0 — 2026-10-19 — M8b done: booting from an ext4 system disk
+- **An ext4 system disk that boots by itself:** `mkdisk.py --system ext4` makes a disk with GRUB in
+  its first track. C: = ext4 holds `boot\` (the kernel, its modules, GRUB's files) and the system
+  directory `\DOORS\`; D: = FAT16 is for exchanging files. `make run-ext4` boots it with no ISO.
+  GRUB is installed by hand, as `grub-bios-setup` does it, because WSL has no loop devices.
+- **The CLI finds commands in any case:** it tries the name as typed, then upper-cased, so `edit`
+  runs `EDIT.ELF` on a case-sensitive ext4 C: too. ext4 names stay case-sensitive.
+- **`make smoke` runs on both system disks:** FAT32 C: (booted from the ISO) and ext4 C: (booted
+  from the disk). On ext4 a new row, B8, checks the disk afterwards with `e2fsck` and boots it
+  again.
+- The damaged E: of `make test` is now made only by `mkdisk.py --damage`, so `build/disk.img`
+  (`make run`, `doors.bat`) comes up clean.
+
 ## 1.6.0 — 2026-10-19 — FAT after a power cut
 - **FAT dirty flag:** the first write after mount sets it in the boot sector, where Linux and
   `fsck.fat` keep it. The monitor's `sync` and the end of the test runs clear it. A volume that

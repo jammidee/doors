@@ -35,6 +35,7 @@ In WSL, from `port64/`:
 | `make` | builds `build/kernel.elf` and `build/doors.iso` |
 | `make console` | boots DOORS drawn in the terminal (QEMU curses). This is what `doors.bat` runs |
 | `make run` | boots DOORS in a QEMU window, serial log on the terminal. It needs QEMU's GUI package (`qemu-system-gui`); without it QEMU only opens a VNC server |
+| `make run-ext4` | boots DOORS from `build/sysdisk.img`, a disk with GRUB on it and an ext4 C: (see [The ext4 system disk](#the-ext4-system-disk)); no ISO |
 | `make test` | runs every self-test headless, then checks the disk with Linux tools ([chapter 10](10-testing-and-tools.md)) |
 | `make debug` | like `run`, but QEMU waits for `gdb` on port 1234 |
 | `make clean` | deletes `build/` |
@@ -88,6 +89,25 @@ against file systems it did not create itself.
 the file to get a fresh disk. It is also rebuilt, and your changes lost, when a program or a file in
 `port64/user/sys/` changes, so that `C:\DOORS\` always holds the current programs. `make test`
 always builds a fresh `build/disk-test.img`.
+
+## The ext4 system disk
+
+DOORS can also boot from a disk by itself, without the ISO, with its system volume on ext4.
+`mkdisk.py --system ext4` (the `build/sysdisk.img` that `make run-ext4` boots) makes:
+
+| Drive | Size | Type | Contents |
+|---|---|---|---|
+| C: | 64 MB | ext4 `DOORS-SYS` | `boot\` (the kernel, its modules, `INITIAL.JOB`, GRUB's configuration and modules), `DOORS\` (the system directory, as on FAT), `MSAMPLES\READ.ME`, `BIN\HELLO.ELF`, `HELLO.TXT` |
+| D: | 16 MB | FAT16 `DOORSXCH` | `README.TXT`: for exchanging files |
+
+GRUB is in the disk's first track: its boot code in the MBR and its core in the sectors before C:.
+It reads `boot\grub\grub.cfg` from the ext4 volume and loads the kernel and the programs from
+`boot\`. When DOORS has written to C:, GRUB still reads it.
+
+Names on an ext4 C: are case-sensitive, as everywhere on ext4: `dir c:\msamples` doesn't find
+`MSAMPLES`, though the drive letter may be lower case. The CLI still finds commands in any case
+(`edit` runs `C:\DOORS\EDIT.ELF`). `make run-ext4` keeps the disk between sessions; delete
+`build/sysdisk.img` for a fresh one.
 
 ## Programs that start at boot
 

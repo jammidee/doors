@@ -77,7 +77,9 @@ make run      # QEMU window; serial log on the terminal. Add QEMU_EXTRA="-monito
 make console  # the DOORS screen drawn in the terminal (QEMU -display curses); `doors.bat` at the repo root runs
               #   this from Windows. WSL's QEMU has no GTK/SDL module, so `make run` has no window unless
               #   qemu-system-gui is installed. Quit curses with Alt+2, then `quit`.
-make smoke    # docs/SMOKE_TEST.md on 64-bit (tools/smoke64.py): types into the CLIs, reads the screen; ~1.5 min
+make run-ext4 # boot build/sysdisk.img: GRUB on the disk, C: = ext4 system volume (mkdisk.py --system ext4), no ISO
+make smoke    # docs/SMOKE_TEST.md on 64-bit (tools/smoke64.py): types into the CLIs, reads the screen; runs twice,
+              #   FAT32 C: from the ISO and ext4 C: from the disk (--ext4); ~3 min
 make powercut # kills QEMU during journaled ext4 writes (tools/powercut.py), checks Linux and DOORS replay; ~2 min
 make fuzz     # damaged FAT/ext4 disks against kernel/{vol,fat,ext4,bcache}.c built for Linux with ASan/UBSan and a
               #   12 KB guarded stack (tests/fsfuzz); ~4 min. A FAIL line prints its --replay command
@@ -198,6 +200,11 @@ make debug    # QEMU waits for gdb on :1234
   `user/sys/*` (`HELP.CLI`, `COMMANDS.CLI`, `--sys`) there. The CLI is `user/progs/cli.c`, a port of
   `MSAMPLES/CLI/CLI.C` (the original stays untouched; its header lists every change). File names without a
   drive are relative to the job's path (`build_spec` in `kernel/fsys.c`).
+- ext4 system disk (`mkdisk.py --system ext4`, `make run-ext4`): GRUB is installed by hand, as grub-bios-setup
+  would (no loop devices in WSL): copy only bytes 0..0x1B7 of `boot.img` into the MBR (its tail overlaps the
+  partition table: GRUB then says "no such partition"), put core.img's LBA at 0x5C, core.img (grub-mkimage) in
+  the first track. ext4 names are case-sensitive on purpose; the CLI upper-cases command names as a fallback.
+  Test fixtures that damage a disk (`--damage`) belong to `make test` only, never to `build/disk.img`.
 - Disks and files: `make test` builds `build/disk-test.img` (tools/mkdisk.py: MBR + FAT32 C:, FAT16 D:,
   FAT12 E:, ext4 F: with a csum_v3 journal; `--plain-journal` for none) and `build/disk2-test.img` (`--disk2`: GPT, 1K-block ext4 G: with htree directories made
   by `e2fsck -D`), and afterwards `tools/check_disk.py` verifies both with `fsck.fat`/mtools and
