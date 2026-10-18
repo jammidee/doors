@@ -472,9 +472,20 @@ static void touch(U8 *raw, bool mtime)
 
 /* ---- extents: reading ---- */
 
-static bool ext_header_ok(const U8 *h)
+#define EXT_MAXDEPTH 5
+
+/* An extent node as Linux's __ext4_ext_check wants it: the magic, entries <= max <= what fits
+   (4 in the inode, (block size - 12) / 12 in a block), a depth below EXT_MAXDEPTH, and an index
+   node (depth > 0) with at least one entry. depth: what the parent says this node's depth must
+   be, or ~0 for the root. Everything that walks a tree checks each node with it, so damaged
+   counts can't run past a buffer and a damaged child pointer can't make a cycle (each step down
+   must be one level lower). */
+static bool ext_node_ok(struct ext4 *e, const U8 *h, U32 depth)
 {
-	return le16(h) == EXT_MAGIC && le16(h + 2) <= le16(h + 4);
+	U32 n = le16(h + 2), max = le16(h + 4), d = le16(h + 6);
+
+	return le16(h) == EXT_MAGIC && n <= max && max <= (depth == ~0U ? 4 : (e->bs - 12) / 12) &&
+	       d < EXT_MAXDEPTH && (depth == ~0U || d == depth) && (d == 0 || n > 0);
 }
 
 /* Physical block for logical block lblk (0 = hole / unwritten), and how many blocks from lblk
@@ -482,13 +493,13 @@ static bool ext_header_ok(const U8 *h)
 static erc_t ext_map(struct ext4 *e, const U8 *raw, U32 lblk, U64 *pblk, U32 *run)
 {
 	const U8 *h = raw + 0x28;
-	U32 depth, n, i;
+	U32 depth = ~0U, n, i;
 	erc_t erc;
 
 	if (!(i_flags(raw) & FL_EXTENTS))
 		return ErcNotSupported;			/* block-mapped (ext2/3) file */
 	for (;;) {
-		if (!ext_header_ok(h))
+		if (!ext_node_ok(e, h, depth))
 			return ErcBrokenFile;
 		depth = le16(h + 6);
 		n = le16(h + 2);
@@ -496,8 +507,7 @@ static erc_t ext_map(struct ext4 *e, const U8 *raw, U32 lblk, U64 *pblk, U32 *ru
 			break;
 		for (i = n; i > 1 && le32(h + 12 + 12 * (i - 1)) > lblk; i--)
 			;
-		if (!n)
-			break;
+		depth--;				/* what the child's depth must be */
 		{
 			const U8 *ix = h + 12 + 12 * (i - 1);
 			U64 child = le32(ix + 4) | ((U64)le16(ix + 8) << 32);
@@ -534,9 +544,18 @@ static erc_t ext_map(struct ext4 *e, const U8 *raw, U32 lblk, U64 *pblk, U32 *ru
 
 typedef bool (*ent_fn)(void *ctx, const char *name, U32 nlen, U32 ino, U8 type);
 
+/* A directory's blocks, from its size; at most 2^32 (logical block numbers are 32-bit). The loops
+   over them skip each hole in one step (ext_map's run), so a damaged size can't keep them busy. */
+static U64 dir_nblk(struct ext4 *e, const U8 *draw)
+{
+	U64 n = i_size(draw) / e->bs + (i_size(draw) % e->bs != 0);
+
+	return n > (1ULL << 32) ? 1ULL << 32 : n;
+}
+
 static erc_t dir_walk(struct ext4 *e, const U8 *draw, ent_fn fn, void *ctx)
 {
-	U64 nblk = (i_size(draw) + e->bs - 1) / e->bs, l, pblk;
+	U64 nblk = dir_nblk(e, draw), l, pblk;
 	U32 run;
 	erc_t erc;
 
@@ -545,8 +564,12 @@ static erc_t dir_walk(struct ext4 *e, const U8 *draw, ent_fn fn, void *ctx)
 
 		if ((erc = ext_map(e, draw, (U32)l, &pblk, &run)))
 			return erc;
-		if (!pblk)
+		if (!pblk) {
+			if (run == 0xFFFFFFFF)		/* past the last extent */
+				break;
+			l += run - 1;
 			continue;
+		}
 		if ((erc = brd(e, pblk, b_dir)))
 			return erc;
 		while (off + 8 <= e->bs) {
@@ -996,7 +1019,6 @@ static bool ext_insert(U8 *h, U32 lblk, U64 pblk, U32 len)
    depth 0, leaves of extents. A full node is split in half into a new block, which adds an entry
    to its parent; a full root grows the tree by a level (its entries move into a new block). */
 
-#define EXT_MAXDEPTH 5
 static U8 lv[EXT_MAXDEPTH][MAXBS], lvs[EXT_MAXDEPTH][MAXBS];	/* a node and its new sibling per level */
 
 static U32 ext_first(const U8 *h) { return le32(h + 12); }	/* first key: ee_block / ei_block */
@@ -1073,7 +1095,7 @@ static erc_t ext_ins(struct ext4 *e, U32 ino, U8 *raw, U8 *h, U32 d, U64 blk, U3
 	cblk = idx_child(ix);
 	if ((erc = brd(e, cblk, c)))
 		return erc;
-	if (le16(c) != EXT_MAGIC || le16(c + 6) != d - 1)
+	if (!ext_node_ok(e, c, d - 1))
 		return ErcBrokenFile;
 	if (d - 1 == 0) {				/* the child is a leaf */
 		if (!ext_insert(c, lblk, pblk, len)) {
@@ -1153,7 +1175,7 @@ static erc_t ext_add(struct ext4 *e, U32 ino, U8 *raw, U32 lblk, U64 pblk, U32 l
 	U64 sblk;
 	erc_t erc;
 
-	if (le16(root + 6) >= EXT_MAXDEPTH)
+	if (!ext_node_ok(e, root, ~0U))
 		return ErcBrokenFile;
 	if (le16(root + 6) == 0) {
 		if (ext_insert(root, lblk, pblk, len))
@@ -1231,7 +1253,7 @@ static erc_t ext_cut_tree(struct ext4 *e, U32 ino, U8 *raw, U8 *h, U32 d, U32 ke
 		}
 		if ((erc = brd(e, cb, c)))
 			return erc;
-		if (le16(c) != EXT_MAGIC || le16(c + 6) != d - 1)
+		if (!ext_node_ok(e, c, d - 1))
 			return ErcBrokenFile;
 		erc = d - 1 ? ext_cut_tree(e, ino, raw, c, d - 1, keep) : ext_cut_array(e, raw, c, keep);
 		if (erc)
@@ -1259,10 +1281,10 @@ static erc_t ext_truncate(struct ext4 *e, U32 ino, U8 *raw, U32 keep)
 	U32 depth = le16(root + 6);
 	erc_t erc;
 
+	if (!ext_node_ok(e, root, ~0U))
+		return ErcBrokenFile;
 	if (depth == 0)
 		return ext_cut_array(e, raw, root, keep);
-	if (depth >= EXT_MAXDEPTH)
-		return ErcBrokenFile;
 	if ((erc = ext_cut_tree(e, ino, raw, root, depth, keep)))
 		return erc;
 	if (!le16(root + 2))
@@ -1402,11 +1424,13 @@ static void dir_tail(struct ext4 *e, U32 dino, const U8 *draw, U8 *blk)
 /* One more block at the end of directory dino (the caller fills and writes it, then iputs). */
 static erc_t dir_append(struct ext4 *e, U32 dino, U8 *draw, U32 *lblk, U64 *pblk)
 {
-	U64 nblk = (i_size(draw) + e->bs - 1) / e->bs, goal = 0, prev;
+	U64 nblk = dir_nblk(e, draw), goal = 0, prev;
 	U32 got, r2;
 	erc_t erc;
 
-	if (nblk && ext_map(e, draw, (U32)nblk - 1, &prev, &r2) == ErcOk && prev)
+	if (nblk >= 0xFFFFFFFFULL)
+		return ErcDirFull;
+	if (nblk &&ext_map(e, draw, (U32)nblk - 1, &prev, &r2) == ErcOk && prev)
 		goal = prev + 1;
 	if ((erc = balloc(e, goal, 1, pblk, &got)) || (erc = ext_add(e, dino, draw, (U32)nblk, *pblk, 1)))
 		return erc;
@@ -1421,7 +1445,7 @@ static erc_t dx_add(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 nl
 static erc_t add_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 nlen, U32 ino, U8 type)
 {
 	U32 need = rec_need(nlen), usable = dir_usable(e);
-	U64 nblk = (i_size(draw) + e->bs - 1) / e->bs, l, pblk;
+	U64 nblk = dir_nblk(e, draw), l, pblk;
 	U32 run;
 	erc_t erc;
 
@@ -1432,8 +1456,12 @@ static erc_t add_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 
 
 		if ((erc = ext_map(e, draw, (U32)l, &pblk, &run)))
 			return erc;
-		if (!pblk)
+		if (!pblk) {
+			if (run == 0xFFFFFFFF)
+				break;
+			l += run - 1;
 			continue;
+		}
 		if ((erc = brd(e, pblk, b_dir)))
 			return erc;
 		while (off < usable) {
@@ -1480,7 +1508,7 @@ static erc_t add_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 
 
 static erc_t del_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 nlen)
 {
-	U64 nblk = (i_size(draw) + e->bs - 1) / e->bs, l, pblk;
+	U64 nblk = dir_nblk(e, draw), l, pblk;
 	U32 run, usable = dir_usable(e);
 	erc_t erc;
 
@@ -1491,8 +1519,12 @@ static erc_t del_link(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 
 
 		if ((erc = ext_map(e, draw, (U32)l, &pblk, &run)))
 			return erc;
-		if (!pblk)
+		if (!pblk) {
+			if (run == 0xFFFFFFFF)
+				break;
+			l += run - 1;
 			continue;
+		}
 		if ((erc = brd(e, pblk, b_dir)))
 			return erc;
 		while (off < usable) {
@@ -2823,7 +2855,7 @@ erc_t ext4_mount(struct volume *v)
 		return ErcNotSupported;
 	log = le32(sb + 0x18);
 	if (log > 2) {
-		kprintf("ext4 on %c: block size %u not supported (max 4096)\n", v->letter, 1024 << log);
+		kprintf("ext4 on %c: block size 2^(10+%u) not supported (max 4096)\n", v->letter, log);
 		return ErcNotSupported;
 	}
 	e->bs = 1024U << log;
@@ -2849,10 +2881,21 @@ erc_t ext4_mount(struct volume *v)
 	e->isize = rev ? le16(sb + 0x58) : 128;
 	e->first_ino = rev ? le32(sb + 0x54) : 11;
 	e->dsize = (e->incompat & INCOMPAT_64BIT) ? le16(sb + 0xFE) : 32;
-	if (!e->bpg || !e->ipg || e->isize > 512 || 512 % e->isize || e->dsize < 32 || e->dsize > 64 ||
+	/* the geometry, checked as Linux's ext4_fill_super does: everything below divides by these or
+	   uses them as sizes and indexes */
+	if (!e->bpg || e->bpg > 8 * e->bs || !e->ipg || e->ipg > 8 * e->bs ||
+	    e->isize < 128 || e->isize > 512 || e->isize > e->bs || (e->isize & (e->isize - 1)) ||
+	    (e->dsize != 32 && e->dsize != 64) || e->first_data > 1 || e->first_data >= e->nblocks ||
+	    e->first_ino < 11 || e->first_ino >= e->ninodes || e->nblocks > (1ULL << 40) ||
 	    e->nblocks * e->spb > v->nsectors)
 		return ErcBrokenFile;
-	e->ngroups = (U32)((e->nblocks - e->first_data + e->bpg - 1) / e->bpg);
+	{
+		U64 ng = (e->nblocks - e->first_data + e->bpg - 1) / e->bpg;
+
+		if (ng * e->ipg != e->ninodes)		/* also keeps ngroups below 2^32 */
+			return ErcBrokenFile;
+		e->ngroups = (U32)ng;
+	}
 	e->gdt = e->first_data + 1;
 	e->seed = (e->incompat & INCOMPAT_CSUM_SEED) ? le32(sb + 0x270) : crc32c(~0U, sb + 0x68, 16);
 	memcpy(v->label, sb + 0x78, 16);

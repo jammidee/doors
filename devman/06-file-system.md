@@ -178,6 +178,14 @@ ext4 volumes made by `mkfs.ext4` have a journal (JBD2), and DOORS uses it as Lin
   are not replayed, and the boot log says `... has a bad checksum: the log ends there`.
 - An external journal means read-only.
 
+### Damaged disks
+
+A damaged FAT or ext4 volume never crashes DOORS. Every count, size, block number and depth read
+from the disk is checked before it is used. A volume whose superblock or boot sector makes no
+sense is not mounted (`Linux (not mounted)` or `unknown` in the boot log). Damage found later, in
+a directory, an extent tree or a cluster chain, makes that call return `ErcBrokenFile`, and the
+rest of the volume stays usable. `make fuzz` tests this ([chapter 10](10-testing-and-tools.md)).
+
 ### ext4 limits
 
 | Situation | Result |

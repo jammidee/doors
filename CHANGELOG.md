@@ -12,6 +12,25 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.5.0 — 2026-10-18 — damaged disks can't crash DOORS
+- **`make fuzz`**, a damaged-disk fuzzer. The kernel's volume, FAT, ext4 and block-cache code runs
+  unchanged as a Linux program (`tests/fsfuzz/`) with AddressSanitizer and UBSan, and again on a
+  12 KB guarded stack. It damages FAT12/16/32 and ext4 disks (with and without checksums) at
+  random, then mounts, reads and writes them. 9,000 damaged images a run.
+- **Fixed, found by it** (all in ext4; FAT came through clean):
+  - A damaged extent node (entry count, `max`, depth, or an index node without entries) made
+    reads and writes run past their buffers, and a child pointer back up the tree made a cycle.
+    Every node is now checked as Linux's `__ext4_ext_check` does, and each step down the tree
+    must be one level lower.
+  - A damaged directory size made directory walks crawl through billions of empty blocks (a
+    hang). Holes are now skipped in one step, and a directory has at most 2^32 blocks.
+  - A damaged superblock with inode size 0 divided by zero during mount (in the kernel: a
+    divide exception, a panic at boot). The geometry is now checked as Linux's `ext4_fill_super`
+    does: inode size, blocks and inodes per group, first data block, inode count, first inode,
+    descriptor size.
+- **Block cache:** lookups go through a hash table instead of scanning all 1024 buffers.
+  `make test` went from about 4 minutes to 106 seconds, and the fuzzer got about 100 times faster.
+
 ## 1.4.0 — 2026-10-18 — M8b: journals with checksums
 - **ext4 volumes whose journal has checksums are written** (JBD2 `csum_v3`, which e2fsprogs 1.47
   makes and Linux turns on when it mounts a `metadata_csum` volume, and the older `csum_v2`). Before,

@@ -6,6 +6,8 @@
 #   make console    boot in QEMU drawn in this terminal (curses); used by doors.bat
 #   make smoke      docs/SMOKE_TEST.md on 64-bit: CLI, editor, samples driven by typed keys (tools/smoke64.py)
 #   make powercut   kill QEMU during journaled ext4 writes, check replay + e2fsck (tools/powercut.py)
+#   make fuzz       damaged FAT/ext4 disks against the kernel's file system code, built for Linux
+#                   with sanitizers (tests/fsfuzz); FUZZ_N damaged images per disk and build
 #   make test       boot headless (tools/qemu_test.py); pass if the serial log shows every
 #                   TEST_MARKS string and the kernel exits QEMU through isa-debug-exit
 #   make debug      like run, but QEMU waits for gdb on :1234 (gdb build/kernel.elf -ex 'target remote :1234')
@@ -116,7 +118,7 @@ TEST_ARGS := \
 	--send "M9: type ed3=Edited in DOORS{alt-s}{alt-q}" \
 	--send "M9: type cli3=dir C:\T9\nexit\n"
 
-.PHONY: all run console test smoke powercut debug clean FORCE
+.PHONY: all run console test smoke powercut fuzz debug clean FORCE
 # Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
 .SECONDARY:
 
@@ -237,6 +239,34 @@ test: $(TEST_ISO) $(USER_ELFS)
 # Kill QEMU in the middle of journaled ext4 writes, then check the disk with Linux and DOORS
 powercut: $(PC_ISOS) $(USER_ELFS)
 	python3 tools/powercut.py
+
+# The file system fuzzer (tests/fsfuzz/fsfuzz.c): the kernel's volume, FAT, ext4 and cache code
+# compiled for Linux. fsfuzz has ASan + UBSan; fsfuzz-stk runs the calls on a 12 KB guarded stack.
+FSFUZZ_SRC := tests/fsfuzz/fsfuzz.c kernel/vol.c kernel/fat.c kernel/ext4.c kernel/crc32c.c kernel/bcache.c
+FSFUZZ_CFLAGS := -std=gnu11 -g -Wall -Wno-unused-function -Itests/fsfuzz/include -Iinclude -I$(BUILD)/gen \
+	-fno-omit-frame-pointer
+FUZZ_N ?= 1500
+FUZZ_DISKS := $(BUILD)/fuzz/fat.img $(BUILD)/fuzz/ext4.img $(BUILD)/fuzz/ext4c.img
+
+$(BUILD)/host/fsfuzz: $(FSFUZZ_SRC) $(wildcard include/doors/*.h tests/fsfuzz/include/doors/*.h)
+	@mkdir -p $(@D)
+	$(CC) $(FSFUZZ_CFLAGS) -O1 -fsanitize=address,undefined -fno-sanitize=alignment \
+		-fno-sanitize-recover=all $(FSFUZZ_SRC) -o $@
+$(BUILD)/host/fsfuzz-stk: $(FSFUZZ_SRC) $(wildcard include/doors/*.h tests/fsfuzz/include/doors/*.h)
+	@mkdir -p $(@D)
+	$(CC) $(FSFUZZ_CFLAGS) -O2 -DFSFUZZ_STACK=12288 $(FSFUZZ_SRC) -o $@
+$(FUZZ_DISKS) &: tools/fuzzdisk.py
+	python3 tools/fuzzdisk.py $(BUILD)/fuzz
+
+# Six runs in parallel (3 disks x 2 builds) with a new seed (the time) every `make fuzz`, so both
+# builds see the same damaged images; the logs are build/fuzz/*.log, and each failure line there
+# gives the command that reproduces it
+fuzz: $(BUILD)/host/fsfuzz $(BUILD)/host/fsfuzz-stk $(FUZZ_DISKS)
+	@for d in $(FUZZ_DISKS); do for f in fsfuzz fsfuzz-stk; do \
+		$(BUILD)/host/$$f $$d -n $(FUZZ_N) > $${d%.img}-$$f.log 2>&1 & done; done; wait; \
+	fail=0; for l in $(BUILD)/fuzz/*-fsfuzz*.log; do \
+		grep -E "^(FAIL|fsfuzz .*damaged)" $$l; grep -q "^FSFUZZ PASS" $$l || fail=1; done; \
+	if [ $$fail = 0 ]; then echo "FUZZ PASS"; else echo "FUZZ FAIL"; exit 1; fi
 
 # docs/SMOKE_TEST.md on the normal ISO: types into a CLI and reads the screen (tools/smoke64.py)
 smoke: $(ISO) $(USER_ELFS)

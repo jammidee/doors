@@ -89,11 +89,45 @@ every checksum DOORS wrote. After each cut:
 
 `--runs N` (default 5) and `--seed S` choose the runs. It ends with `POWERCUT PASS`.
 
+## `make fuzz`: damaged disks
+
+`make fuzz` checks that a damaged disk can't crash DOORS. The kernel's own volume, FAT, ext4,
+CRC32C and block-cache code (`kernel/vol.c`, `fat.c`, `ext4.c`, `crc32c.c`, `bcache.c`) is compiled
+unchanged into a Linux program, `port64/tests/fsfuzz/fsfuzz.c`, over a disk image in memory. That
+makes it thousands of times faster than booting QEMU for every image, and memory errors that the
+kernel would not notice are caught too.
+
+- **The disks** (`tools/fuzzdisk.py`, in `build/fuzz/`):
+  - `fat.img`: FAT12, FAT16 and FAT32, with long names, nested directories, a directory of 150
+    files and a fragmented file;
+  - `ext4.img`: ext4 with 4K and 1K blocks, without metadata checksums, so damage reaches the
+    parsing code instead of stopping at a checksum. It has htree directories, a file of 300
+    extents and a pending journal transaction;
+  - `ext4c.img`: the same with `metadata_csum` and a csum_v3 journal.
+- **An iteration:** it damages 1–8 of the sectors that a clean run read: bit flips, bytes, 16/32-bit
+  fields set to edge values, bytes copied from another sector, runs of random bytes. Then it
+  mounts every volume (journal replay too), walks every directory, reads every file, and on
+  writable volumes creates, writes, grows, cuts, renames and deletes files and directories, also
+  in damaged ones. It makes the FILESYS service's checks first (read-only volumes, directories),
+  so it only makes calls the kernel can make.
+- **Two builds:** `fsfuzz` with AddressSanitizer and UndefinedBehaviorSanitizer, and `fsfuzz-stk`
+  without sanitizers, whose calls run on a 12 KB stack with an unmapped guard page. The FILESYS
+  task has 16 KB, so a recursion too deep for the kernel faults there.
+- **A failure** is a crash, a `panic()`, a sanitizer report or a hang over 20 s. Each `FAIL` line
+  prints the command that reproduces it:
+  `build/host/fsfuzz DISK --seed S --replay I [--dump OUT.img] [-v]`. That command runs the one
+  damaged image with the kernel messages shown, and `--dump` writes it out, to boot in QEMU.
+
+`FUZZ_N` (default 1500) is the number of damaged images per disk and build. The six runs go in
+parallel, each to its own log in `build/fuzz/*.log`, and it ends with `FUZZ PASS`, in about
+4 minutes.
+
 ## Tools
 
 | Tool | Purpose |
 |---|---|
 | `port64/tools/powercut.py` | the power-cut test (`make powercut`) |
+| `port64/tests/fsfuzz/fsfuzz.c`, `port64/tools/fuzzdisk.py OUTDIR` | the damaged-disk fuzzer and its disks (`make fuzz`) |
 | `port64/tools/smoke64.py` | the 64-bit smoke test (`make smoke`) |
 | `port64/tools/qemu_test.py` | headless test runner: `--iso`, `--disk`, `--log`, `--expect TEXT` (repeatable), `--send "TRIGGER=TEXT"` (`\n` = Enter, `{name}` = a raw QEMU key such as `{f1}`), `--timeout` |
 | `port64/tools/mkdisk.py OUT.img [--hello ELF]` | builds the 4-partition test disk |

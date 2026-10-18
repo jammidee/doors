@@ -9,17 +9,20 @@
 #include <doors/string.h>
 #include <doors/x86.h>
 
-#define NBUF 1024				/* 512 KB of sectors */
+#define NBUF  1024				/* 512 KB of sectors */
+#define NHASH 2048				/* hash chains over (device, sector) */
 
 struct cbuf {
 	struct blkdev *dev;
 	U64 lba;
 	U64 used;				/* LRU stamp */
-	bool valid;
+	bool valid;				/* valid buffers, and only they, are in a hash chain */
+	U16 hnext;				/* next in the chain: index + 1, 0 = end */
 };
 
 static struct cbuf *meta;
 static U8 *data;
+static U16 hhead[NHASH];			/* first buffer of each chain: index + 1 */
 static U64 clock, hits, misses;
 
 void bc_init(void)
@@ -33,14 +36,44 @@ void bc_init(void)
 		panic("bcache: no memory");
 }
 
+static U32 hash(struct blkdev *d, U64 lba)
+{
+	return (U32)((lba * 0x9E3779B97F4A7C15ULL ^ (U64)(uintptr_t)d) >> 40) & (NHASH - 1);
+}
+
 static struct cbuf *find(struct blkdev *d, U64 lba)
 {
 	U32 i;
 
-	for (i = 0; i < NBUF; i++)
-		if (meta[i].valid && meta[i].dev == d && meta[i].lba == lba)
-			return &meta[i];
+	for (i = hhead[hash(d, lba)]; i; i = meta[i - 1].hnext)
+		if (meta[i - 1].dev == d && meta[i - 1].lba == lba)
+			return &meta[i - 1];
 	return NULL;
+}
+
+/* b->dev and b->lba set: mark it valid and put it in its chain */
+static void hash_in(struct cbuf *b)
+{
+	U16 *h = &hhead[hash(b->dev, b->lba)];
+
+	b->valid = true;
+	b->hnext = *h;
+	*h = (U16)(b - meta + 1);
+}
+
+/* make b invalid, taking it out of its chain */
+static void unhash(struct cbuf *b)
+{
+	U16 *p, me = (U16)(b - meta + 1);
+
+	if (!b->valid)
+		return;
+	for (p = &hhead[hash(b->dev, b->lba)]; *p; p = &meta[*p - 1].hnext)
+		if (*p == me) {
+			*p = b->hnext;
+			break;
+		}
+	b->valid = false;
 }
 
 static struct cbuf *victim(void)
@@ -72,12 +105,12 @@ erc_t bc_read(struct blkdev *d, U64 lba, void *dst)
 	} else {
 		misses++;
 		b = victim();
-		b->valid = false;
+		unhash(b);
 		if ((erc = blk_io(d, CmdRead, lba, 1, bytes(b))))
 			return erc;
 		b->dev = d;
 		b->lba = lba;
-		b->valid = true;
+		hash_in(b);
 	}
 	b->used = ++clock;
 	memcpy(dst, bytes(b), 512);
@@ -91,14 +124,16 @@ erc_t bc_write(struct blkdev *d, U64 lba, const void *src)
 
 	if (!b) {
 		b = victim();
-		b->valid = false;
+		unhash(b);
 	}
 	memcpy(bytes(b), src, 512);
 	if ((erc = blk_io(d, CmdWrite, lba, 1, bytes(b))))
 		return erc;
-	b->dev = d;
-	b->lba = lba;
-	b->valid = true;
+	if (!b->valid) {
+		b->dev = d;
+		b->lba = lba;
+		hash_in(b);
+	}
 	b->used = ++clock;
 	return ErcOk;
 }
@@ -118,12 +153,14 @@ erc_t bc_write_n(struct blkdev *d, U64 lba, U32 n, const void *src)
 	for (i = 0; i < n; i++) {
 		struct cbuf *b = find(d, lba + i);
 
-		if (!b)
+		if (!b) {
 			b = victim();
+			unhash(b);
+			b->dev = d;
+			b->lba = lba + i;
+			hash_in(b);
+		}
 		memcpy(bytes(b), s + (U64)i * 512, 512);
-		b->dev = d;
-		b->lba = lba + i;
-		b->valid = true;
 		b->used = ++clock;
 	}
 	return ErcOk;
@@ -137,7 +174,7 @@ void bc_invalidate(struct blkdev *d, U64 lba, U32 n)
 		return;
 	for (i = 0; i < NBUF; i++)
 		if (meta[i].valid && meta[i].dev == d && meta[i].lba >= lba && meta[i].lba < lba + n)
-			meta[i].valid = false;
+			unhash(&meta[i]);
 }
 
 void bc_stats(U64 *h, U64 *m)
