@@ -11,6 +11,9 @@ the journal but not yet in place, so a replay is needed. Then:
   B. DOORS: boot "pccheck" on the disk: the mount replays the journal, every file in F:\\PC must
      read back. Then e2fsck -fn must be clean without any repair, and the model must hold.
 Even runs give F: a csum_v3 journal (so Linux checks every checksum DOORS wrote), odd runs a plain one.
+FAT runs (--fat-runs) write C:\\PC instead and cut at random. FAT has no journal, so the cut may leave
+damage: fsck.fat -n on a copy must find the dirty flag and exactly the problems that DOORS's mount
+check then reports when it boots "pccheck vol=C"; every finished operation must be there.
 "Every operation that printed `done` is there": all slots match the model after the last done op N;
 the slots touched by op N+1 (in progress at the cut) may hold either state.
 
@@ -22,6 +25,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = os.path.abspath(os.path.join(HERE, ".."))
 sys.path.insert(0, HERE)
 from mkdisk import PARTS, SEC  # noqa: E402
+from check_disk import fsck_findings, doors_findings  # noqa: E402
 
 os.environ["PATH"] = os.environ.get("PATH", "") + ":/sbin:/usr/sbin"
 DISK = "/tmp/doors-pc.img"
@@ -95,8 +99,8 @@ def read_log():
         return ""
 
 
-def ext4_part(dst):
-    start, n = PARTS[3][0], PARTS[3][1]
+def ext4_part(dst, part=3):
+    start, n = PARTS[part][0], PARTS[part][1]
     with open(DISK, "rb") as f, open(dst, "wb") as o:
         f.seek(start * SEC)
         o.write(f.read(n * SEC))
@@ -119,9 +123,9 @@ def cat(img, path):
                           stderr=subprocess.DEVNULL).stdout
 
 
-def check_model(img, nops):
+def check_model(img, nops, ls=ls_pc, rd=cat):
     final, touched = model(nops)
-    names = ls_pc(img)
+    names = ls(img)
     for s in range(NSLOTS):
         if s in touched:
             continue                    # op nops+1 was in progress: either state is fine
@@ -129,10 +133,64 @@ def check_model(img, nops):
         have = name(s) in names
         if (want is not None) != have:
             return f"{name(s)}: {'missing' if want is not None else 'should not exist'} after op {nops}"
-        if want is not None and cat(img, f"/PC/{name(s)}") != content(want):
+        if want is not None and rd(img, f"/PC/{name(s)}") != content(want):
             return f"{name(s)}: content is not op {want}'s"
     extra = names - {name(s) for s in range(NSLOTS)}
     return f"unexpected files {sorted(extra)}" if extra else None
+
+
+# ---- FAT (C:): no journal; DOORS's mount check must report what fsck.fat finds ----
+
+MENV = dict(os.environ, MTOOLS_SKIP_CHECK="1")
+
+
+def ls_fat(img):
+    out = subprocess.run(["mdir", "-b", "-i", img, "::/PC"], stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, env=MENV).stdout.decode()
+    return {l.rsplit("/", 1)[-1] for l in out.split() if l.upper().endswith(".BIN")}
+
+
+def cat_fat(img, path):
+    return subprocess.run(["mtype", "-i", img, "::" + path], stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL, env=MENV).stdout
+
+
+def run_fat(n):
+    subprocess.run([sys.executable, os.path.join(HERE, "mkdisk.py"), DISK,
+                    "--hello", os.path.join(PORT, "build", "user", "hello.elf"),
+                    "--progs", os.path.join(PORT, "build", "user"),
+                    "--sys", os.path.join(PORT, "user", "sys")], check=True, stdout=subprocess.DEVNULL)
+    k = random.randint(15, 90)
+    log, _ = boot(os.path.join(PORT, "build", "doors-pcfat.iso"), lambda l, k=k: f"PC: op {k} done" in l, 120)
+    if "failed" in log:
+        return f"the writer failed: {re.findall(r'PC: .*failed.*', log)}"
+    nops = last_done(log)
+    _, touched = model(nops)
+    with tempfile.TemporaryDirectory() as tmp:
+        a = os.path.join(tmp, "c.img")
+        ext4_part(a, 0)
+        r = subprocess.run(["fsck.fat", "-n", a], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        fsck, unknown = fsck_findings(r.stdout.decode(errors="replace"))
+        if unknown is not None:
+            return f"A: fsck.fat said something the test doesn't know: {unknown!r}"
+        if ("dirty",) not in fsck:
+            return "A: fsck.fat doesn't see the dirty flag"
+        err = check_model(a, nops, ls_fat, cat_fat)     # every finished operation is there
+        if err:
+            return "A (FAT, before any repair): " + err
+    log, status = boot(os.path.join(PORT, "build", "doors-pcfatcheck.iso"), None, 120)
+    if status != 33 or "PC: check ok" not in log:
+        return "B: DOORS check failed: " + " | ".join(l for l in log.splitlines() if "PC:" in l or "FAT on" in l)
+    doors = doors_findings(log)
+    if doors != fsck:
+        return f"B: DOORS predicted {sorted(doors, key=str)}, fsck.fat found {sorted(fsck, key=str)}"
+    bad = {m for m in re.findall(r"PC: unreadable (\S+):", log)}
+    if bad - {name(s) for s in touched}:
+        return f"B: DOORS can't read {sorted(bad)}, but only op {nops + 1}'s files may be damaged"
+    shown = ", ".join(f[0] + (f" {f[1]}" if len(f) > 1 else "") for f in sorted(doors - {("dirty",)}, key=str))
+    print(f"PASS  FAT run {n}: cut after op {k} done, {nops} ops done; fsck.fat and DOORS both found: "
+          f"dirty{', ' + shown if shown else ''}", flush=True)
+    return None
 
 
 def last_done(log):
@@ -197,18 +255,24 @@ def run(n, stop):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--runs", type=int, default=5, help="runs (run 0 stops inside a commit)")
+    ap.add_argument("--runs", type=int, default=5, help="ext4 runs (run 0 stops inside a commit)")
+    ap.add_argument("--fat-runs", type=int, default=5, help="runs on FAT (C:)")
     ap.add_argument("--seed", type=int, help="random seed for the cut points")
     a = ap.parse_args()
     seed = a.seed if a.seed is not None else int(time.time())
     random.seed(seed)
-    print(f"power-cut test: {a.runs} runs, seed {seed}", flush=True)
+    print(f"power-cut test: {a.runs} ext4 runs, {a.fat_runs} FAT runs, seed {seed}", flush=True)
     fails = 0
     for n in range(a.runs):
         err = run(n, n == 0)
         if err:
             fails += 1
             print(f"FAIL  run {n}: {err}", flush=True)
+    for n in range(a.fat_runs):
+        err = run_fat(n)
+        if err:
+            fails += 1
+            print(f"FAIL  FAT run {n}: {err}", flush=True)
     print(f"POWERCUT {'PASS' if not fails else f'FAIL ({fails})'}")
     sys.exit(1 if fails else 0)
 

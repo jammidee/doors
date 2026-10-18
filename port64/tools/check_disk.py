@@ -3,9 +3,11 @@
 """After `make test`: check, with the host's own FAT and ext4 tools, what the DOORS kernel wrote to
 the test disk (port64/kernel/selftest.c, M7/M8 and user/progs/fsuser.c).
 
-  python3 tools/check_disk.py build/disk-test.img
+  python3 tools/check_disk.py build/disk-test.img [build/disk2-test.img] [--log build/serial.log]
 
-- fsck.fat -n on the FAT partitions and e2fsck -fn on the ext4 one must find nothing wrong;
+- fsck.fat -n on C: and D: and e2fsck -fn on the ext4 volumes must find nothing wrong;
+- E: was left dirty and damaged by mkdisk: fsck.fat must find exactly that damage, and the serial
+  log (--log) must show that DOORS's mount check reported the same;
 - the files written by DOORS must have the expected names (long ones too), sizes, contents and
   plausible dates; the files and directories it deleted must be gone.
 """
@@ -69,6 +71,80 @@ def e4block(img, path, lblk):
                 f.seek((int(m.group(3)) + lblk - int(m.group(1))) * 4096)
                 return f.read(4096)
     return None
+
+
+# ---- FAT: fsck.fat's findings and DOORS's mount check, in one form (also used by tools/powercut.py) ----
+
+# what mkdisk's damage_fat12 leaves on E: (writable) and H: (mounted read-only)
+E_DAMAGE = {("dirty",), ("long", "/LONG.TXT"), ("short", "/SHORT.TXT"), ("lost", 1), ("fatdiff",)}
+H_DAMAGE = {("dirty",), ("free", "/FREE.TXT"), ("short", "/FREE.TXT"), ("share", "/SHARE.TXT"),
+            ("short", "/SHARE.TXT"), ("lost", 2)}
+
+
+def opt(name):
+    return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
+
+def fsck_findings(out):
+    """fsck.fat -n output -> a set of findings, or (None, the line it doesn't know)."""
+    found, path = set(), None
+    lines = out.splitlines()
+    for i, l in enumerate(lines):
+        if l.startswith("/"):
+            path = l.strip()
+        elif "Dirty bit is set" in l:
+            found.add(("dirty",))
+        elif "cluster chain length is >" in l:
+            found.add(("long", path))
+        elif "cluster chain length is" in l:
+            found.add(("short", path))
+        elif "Contains a free cluster" in l:
+            found.add(("free", path))
+        elif "Contains a bad cluster" in l:
+            found.add(("bad", path))
+        elif "share clusters" in l:
+            found.add(("share", path))
+        elif m := re.search(r"Reclaimed (\d+) unused cluster", l):
+            found.add(("lost", int(m.group(1))))
+        elif "FATs differ" in l:
+            found.add(("fatdiff",))
+        elif re.match(r"\s+(65|37):01/00$", l) or "differences between boot sector and its backup" in l:
+            pass                        # the dirty flag itself (only the primary boot sector has it)
+        elif re.match(r"\s*(This is mostly harmless|Not automatically fixing|Truncating|Automatically "
+                      r"removing|Leaving filesystem|Free cluster summary uninitialized|Assuming EOF|and$|"
+                      r"Using first FAT)", l) \
+                or l.startswith("fsck.fat ") or l.startswith("/tmp") or "files," in l or not l.strip():
+            pass
+        else:
+            return None, l
+    return found, None
+
+
+def doors_findings(log, letter="C"):
+    """DOORS's mount check lines for volume `letter` (kernel/fat.c fat_check) -> the same findings."""
+    found = set()
+    for l in log.splitlines():
+        if not l.startswith(f"FAT on {letter}: "):
+            continue
+        m = re.match(rf"FAT on {letter}: (\\\S*): (.*)", l)
+        what = m.group(2) if m else l
+        p = m.group(1).replace("\\", "/") if m else None
+        if "was not unmounted cleanly" in l:
+            found.add(("dirty",))
+        elif "its chain is longer" in what:
+            found.add(("long", p))
+        elif "its chain holds only" in what:
+            found.add(("short", p))
+        elif "reaches a free cluster" in what:
+            found.add(("free", p))
+        elif "reaches a bad cluster" in what:
+            found.add(("bad", p))
+        elif "shares clusters" in what:
+            found.add(("share", p))
+        elif n := re.search(r"(\d+) lost clusters", l):
+            found.add(("lost", int(n.group(1))))
+        elif "FAT copies differ" in l:
+            found.add(("fatdiff",))
+    return found
 
 
 def check_ext4(f4):
@@ -135,6 +211,25 @@ def check_disk2(disk2, tmp):
     check("G:\\ONE has exactly the 380 expected names", names["ONE"] == one, f"{len(names['ONE'])} names")
     check("G:\\TWO has exactly the 720 expected names", names["TWO"] == two, f"{len(names['TWO'])} names")
 
+    # H: (FAT12) was left dirty with problems that make writing unsafe: DOORS mounts it read-only,
+    # so it must be exactly as mkdisk left it
+    from mkdisk import D2_H_START, D2_H_SECTORS
+    h = os.path.join(tmp, "h.img")
+    with open(disk2, "rb") as f, open(h, "wb") as o:
+        f.seek(D2_H_START * SEC)
+        o.write(f.read(D2_H_SECTORS * SEC))
+    r = subprocess.run(["fsck.fat", "-n", h], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    found, unknown = fsck_findings(r.stdout.decode(errors="replace"))
+    check("fsck.fat H: FAT12 finds exactly the damage mkdisk left", found == H_DAMAGE,
+          f"unknown line {unknown!r}" if unknown is not None else sorted(found, key=str))
+    log = opt("--log")
+    if log:
+        text = open(log, errors="replace").read()
+        doors = doors_findings(text, "H")
+        check("DOORS's mount check of H: reported the same", doors == H_DAMAGE, sorted(doors, key=str))
+        check("DOORS mounted H: read-only", "FAT on H: mounted read-only" in text and
+              re.search(r"Volume H: .*FAT12 \(read-only\)", text))
+
 
 def main():
     disk = sys.argv[1]
@@ -148,10 +243,20 @@ def main():
                 imgs.append(p)
         c, d, e, f4 = imgs
 
-        for p, name in zip(imgs[:3], ("C: FAT32", "D: FAT16", "E: FAT12")):
+        for p, name in zip(imgs[:2], ("C: FAT32", "D: FAT16")):
             r = subprocess.run(["fsck.fat", "-n", p], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             out = r.stdout.decode(errors="replace")
             check(f"fsck.fat {name}: no errors", r.returncode == 0, out.strip().splitlines()[-3:])
+        # E: was left dirty and damaged by mkdisk (damage_e): it stays dirty, and fsck.fat must find
+        # exactly that damage, which DOORS's mount check reported at boot
+        r = subprocess.run(["fsck.fat", "-n", e], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        found, unknown = fsck_findings(r.stdout.decode(errors="replace"))
+        check("fsck.fat E: FAT12 finds exactly the damage mkdisk left", found == E_DAMAGE,
+              f"unknown line {unknown!r}" if unknown is not None else sorted(found, key=str))
+        log = opt("--log")
+        if log:
+            doors = doors_findings(open(log, errors="replace").read(), "E")
+            check("DOORS's mount check of E: reported the same", doors == E_DAMAGE, sorted(doors, key=str))
 
         check("C:\\NEW.TXT = 10000 bytes of pattern 13", mtype(c, "NEW.TXT") == pat(10000, 13))
         check("C:\\COPY.TXT = HELLO.TXT (stream copy)", mtype(c, "COPY.TXT") == HELLO_TXT)
@@ -180,7 +285,7 @@ def main():
               r.stdout.decode(errors="replace").strip())
 
         check_ext4(f4)
-        if len(sys.argv) > 2:
+        if len(sys.argv) > 2 and not sys.argv[2].startswith("--"):
             check_disk2(sys.argv[2], tmp)
 
     print("CHECK_DISK " + ("PASS" if not fails else f"FAIL ({len(fails)})"))

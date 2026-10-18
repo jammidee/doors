@@ -6,8 +6,12 @@
                        in the journal and before its blocks reach their homes
      pccheck           boot again on the same disk: mounting F: replays the journal; read every file
                        in F:\PC, then end QEMU through isa-debug-exit
+     vol=C             (with either) use C:\PC instead, on FAT: no journal, so the mount reports
+                       what the cut left (fat_check) and pccheck lists unreadable files instead of
+                       failing on them
    The operation sequence is mirrored in tools/powercut.py, which checks the disk with Linux tools:
-   every operation that printed "done" must be there, and e2fsck must find nothing wrong. */
+   every operation that printed "done" must be there; e2fsck must find nothing wrong, and fsck.fat
+   must find what DOORS's mount check reported. */
 
 #include <doors/console.h>
 #include <doors/fs.h>
@@ -20,14 +24,24 @@
 
 static bool used[NSLOTS];
 static U8 buf[4096];
+static char vol = 'F';				/* vol=X on the command line */
+static char pcdir[] = "F:\\PC";
 
 static U32 plen(const char *p) { return (U32)strlen(p); }
 
 static void slot_name(char *p, U32 s)
 {
 	memcpy(p, "F:\\PC\\F00.BIN", 14);
+	p[0] = vol;
 	p[7] = (char)('0' + s / 10);
 	p[8] = (char)('0' + s % 10);
+}
+
+static void set_vol(const char *cmd)
+{
+	for (; *cmd; cmd++)
+		if (!memcmp(cmd, "vol=", 4) && cmd[4] >= 'C' && cmd[4] <= 'Z')
+			vol = pcdir[0] = cmd[4];
 }
 
 /* op i writes slot i % 16 with (i * 7919) % 50000 + 1 bytes, byte k = (k * 31 + i) & 0xFF;
@@ -95,8 +109,9 @@ NORETURN void powercut_run(const char *cmdline)
 	U32 i;
 	erc_t erc;
 
+	set_vol(cmdline);
 	ext4_commit_stop = cmdline_num(cmdline, "stop=");
-	erc = CreateDir("F:\\PC", 5);
+	erc = CreateDir(pcdir, 5);
 	kprintf("PC: writing (CreateDir: %u, stop at commit %u)\n", erc, ext4_commit_stop);
 	for (i = 1;; i++) {
 		if ((erc = op(i))) {
@@ -108,18 +123,22 @@ NORETURN void powercut_run(const char *cmdline)
 	}
 }
 
-NORETURN void powercut_check(void)
+NORETURN void powercut_check(const char *cmdline)
 {
 	struct dir_entry de;
-	U32 i, n = 0, h;
+	U32 i, n = 0, bad = 0, h;
 	U64 got, total;
 	erc_t erc = ErcOk;
+	bool fat;
 
-	for (i = 0; ReadDir("F:\\PC", 5, i, &de) == ErcOk; i++) {
+	set_vol(cmdline);
+	fat = vol_get(vol) && vol_get(vol)->kind != VOL_EXT4;
+	for (i = 0; ReadDir(pcdir, 5, i, &de) == ErcOk; i++) {
 		char name[300];
 		U32 l = (U32)strlen(de.name);
 
 		memcpy(name, "F:\\PC\\", 6);
+		name[0] = vol;
 		memcpy(name + 6, de.name, l + 1);
 		if ((erc = OpenFile(name, l + 6, ModeRead, 1, &h)))
 			break;
@@ -129,21 +148,28 @@ NORETURN void powercut_check(void)
 			total += got;
 		} while (erc == ErcOk && got);
 		CloseFile(h);
-		if (erc != ErcOk && erc != ErcEOF)
-			break;
-		if (total != de.size) {
+		if (erc == ErcEOF)
+			erc = ErcOk;
+		if (!erc && total != de.size) {
 			kprintf("PC: %s: read %lu of %lu bytes\n", de.name, total, de.size);
 			erc = ErcBrokenFile;
-			break;
 		}
-		erc = ErcOk;
+		if (erc && fat) {			/* the file the cut was writing: expected on FAT */
+			kprintf("PC: unreadable %s: error %u\n", de.name, erc);
+			bad++;
+			erc = ErcOk;
+			continue;
+		}
+		if (erc)
+			break;
 		n++;
 	}
 	if (erc)
 		kprintf("PC: check failed: error %u\n", erc);
 	else
-		kprintf("PC: check ok (%u files read)\n", n);
+		kprintf("PC: check ok (%u files read, %u unreadable)\n", n, bad);
 	ext4_unmount();				/* clean: needs_recovery cleared */
+	fat_unmount();				/* (a FAT volume left dirty stays dirty) */
 	qemu_exit(erc ? QEMU_EXIT_FAIL : QEMU_EXIT_PASS);
 	for (;;)
 		;

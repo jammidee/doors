@@ -45,10 +45,11 @@ static void add(struct blkdev *d, U64 start, U64 n, U8 part, bool linux_hint)
 	if (fat_mount(v) != ErcOk && ext4_mount(v) != ErcOk)
 		v->kind = linux_hint ? VOL_LINUX : VOL_NONE;
 	nvols++;
-	kprintf("Volume %c: disk %u part %u, %lu MB, %s%s%s\n", v->letter, d->devnum, part, n >> 11,
+	kprintf("Volume %c: disk %u part %u, %lu MB, %s%s%s%s\n", v->letter, d->devnum, part, n >> 11,
 		v->kind == VOL_FAT12 ? "FAT12" : v->kind == VOL_FAT16 ? "FAT16" :
-		v->kind == VOL_FAT32 ? "FAT32" : v->kind == VOL_EXT4 ? (v->ro ? "ext4 (read-only)" : "ext4") :
-		v->kind == VOL_LINUX ? "Linux (not mounted)" : "unknown", v->label[0] ? " " : "", v->label);
+		v->kind == VOL_FAT32 ? "FAT32" : v->kind == VOL_EXT4 ? "ext4" :
+		v->kind == VOL_LINUX ? "Linux (not mounted)" : "unknown", v->ro ? " (read-only)" : "",
+		v->label[0] ? " " : "", v->label);
 }
 
 struct mbr_part {

@@ -72,10 +72,73 @@ def put(img, data, path, tmp):
     run("mcopy", "-i", img, src, "::" + path, env=env())
 
 
-# ---- the second test disk (device 13, volume G:): GPT, one ext4 partition with 1K blocks ----
+# ---- FAT12 volumes left as after a crash: the dirty flag and one of each problem DOORS's mount
+# check (kernel/fat.c fat_check) reports; tools/check_disk.py checks that fsck.fat finds the same.
+#   E: (stays writable, DOORS's FAT12 write test runs on it):
+#     LONG.TXT   100 bytes, a 2-cluster chain              (chain longer than the size)
+#     SHORT.TXT  5 clusters' size, a 1-cluster chain       (chain too short)
+#     one cluster in use in FAT 1 only                     (lost; the FAT copies differ)
+#   H: (disk 2; problems that make DOORS mount it read-only):
+#     FREE.TXT   3 clusters, the first one marked free     (a free cluster in the chain; too short)
+#     SHARE.TXT  an entry for ORIG.TXT's chain             (two files share clusters)
+#     lost: FREE's last 2 clusters
+# (A chain starting with a bad cluster is reported by DOORS too, but fsck.fat 4.2 aborts on it:
+# "Internal error: next_cluster on bad cluster".)
+
+def damage_fat12(img, tmp, unsafe):
+    d = bytearray(open(img, "rb").read())
+    spc = d[13]
+    cs = spc * SEC
+    if unsafe:
+        for n in ("FREE.TXT", "ORIG.TXT"):
+            put(img, b"x" * (2 * cs + 100), n, tmp)
+    else:
+        put(img, b"L" * 100, "LONG.TXT", tmp)
+        put(img, b"S" * 100, "SHORT.TXT", tmp)
+    d = bytearray(open(img, "rb").read())
+    rsvd, nfats = struct.unpack_from("<H", d, 14)[0], d[16]
+    rootents, fatsz = struct.unpack_from("<H", d, 17)[0], struct.unpack_from("<H", d, 22)[0]
+    d = bytearray(open(img, "rb").read())
+    total = struct.unpack_from("<H", d, 19)[0] or struct.unpack_from("<I", d, 32)[0]
+    root = (rsvd + nfats * fatsz) * SEC
+    nclus = (total - rsvd - nfats * fatsz - (rootents * 32 + 511) // 512) // spc
+
+    def fat_set(c, v, copies=range(nfats)):
+        for k in copies:
+            o = (rsvd + k * fatsz) * SEC + c * 3 // 2
+            w = struct.unpack_from("<H", d, o)[0]
+            w = (w & 0x000F) | (v << 4) if c & 1 else (w & 0xF000) | v
+            struct.pack_into("<H", d, o, w)
+
+    def entry(name):
+        n11 = (name.split(".")[0].ljust(8) + name.split(".")[1].ljust(3)).encode()
+        for i in range(rootents):
+            if d[root + 32 * i:root + 32 * i + 11] == n11:
+                return root + 32 * i
+        raise SystemExit("mkdisk: E:" + name + " not found")
+
+    first = lambda name: struct.unpack_from("<H", d, entry(name) + 26)[0]
+    if unsafe:
+        fat_set(first("FREE.TXT"), 0)
+        o = entry("ORIG.TXT")
+        free = next(root + 32 * i for i in range(rootents) if d[root + 32 * i] in (0, 0xE5))
+        d[free:free + 32] = d[o:o + 32]
+        d[free:free + 11] = b"SHARE   TXT"
+    else:
+        c1, c2 = nclus + 1, nclus               # free clusters at the end of the volume
+        fat_set(first("LONG.TXT"), c1)
+        fat_set(c1, 0xFFF)
+        struct.pack_into("<I", d, entry("SHORT.TXT") + 28, 5 * cs)
+        fat_set(c2, 0xFFF, copies=[0])
+    d[37] |= 1                                  # the dirty flag (FAT12/16: byte 37)
+    open(img, "wb").write(d)
+
+
+# ---- the second test disk (device 13): GPT; G: ext4 with 1K blocks, H: a damaged FAT12 ----
 # ONE and TWO are htree directories (e2fsck -D indexes them): ONE has one index level, TWO two.
 D2_TOTAL = 98304                 # 48 MB
 D2_START, D2_SECTORS = 2048, 65536
+D2_H_START, D2_H_SECTORS = D2_START + D2_SECTORS, 8192
 D2_README = b"1K-block ext4 on a GPT disk.\n"
 
 
@@ -84,13 +147,14 @@ def htree_name(prefix, i, fill):
     return f"{prefix}{i:04}" + fill * 190
 
 
-def gpt_disk(out, part_img):
+def gpt_disk(out, parts):
+    """parts: [(start, sectors, type GUID, name, partition image)]"""
     import uuid, zlib
     entries = bytearray(128 * 128)
-    linux = uuid.UUID("0FC63DAF-8483-4772-8E79-3D69D8477DE4").bytes_le
-    name = "DOORS-1K".encode("utf-16-le")
-    entries[0:128] = (linux + uuid.uuid4().bytes_le +
-                      struct.pack("<QQQ", D2_START, D2_START + D2_SECTORS - 1, 0) + name.ljust(72, b"\0"))
+    for i, (start, n, typ, pname, _) in enumerate(parts):
+        entries[128 * i:128 * (i + 1)] = (uuid.UUID(typ).bytes_le + uuid.uuid4().bytes_le +
+                                          struct.pack("<QQQ", start, start + n - 1, 0) +
+                                          pname.encode("utf-16-le").ljust(72, b"\0"))
     ecrc = zlib.crc32(entries) & 0xFFFFFFFF
     disk_guid = uuid.uuid4().bytes_le
 
@@ -112,8 +176,9 @@ def gpt_disk(out, part_img):
         f.seek((D2_TOTAL - 33) * SEC)
         f.write(entries)
         f.write(header(D2_TOTAL - 1, 1, D2_TOTAL - 33))
-        f.seek(D2_START * SEC)
-        f.write(open(part_img, "rb").read())
+        for start, _, _, _, img in parts:
+            f.seek(start * SEC)
+            f.write(open(img, "rb").read())
 
 
 def make_disk2(out, tmp):
@@ -132,7 +197,14 @@ def make_disk2(out, tmp):
     run("mkfs.ext4", "-q", "-F", "-T", "default", "-b", "1024", "-I", "256", "-L", "DOORS-1K",
         "-d", tree, img, str(D2_SECTORS // 2))
     subprocess.run(["e2fsck", "-fyD", img], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    gpt_disk(out, img)
+    h = os.path.join(tmp, "h.img")             # H: FAT12, dirty, with the problems that make it read-only
+    with open(h, "wb") as f:
+        f.truncate(D2_H_SECTORS * SEC)
+    run("mkfs.fat", "-F", "12", "-n", "DOORSH", "-h", str(D2_H_START), "-S", "512", h)
+    put(h, b"intact\n", "OK.TXT", tmp)
+    damage_fat12(h, tmp, True)
+    gpt_disk(out, [(D2_START, D2_SECTORS, "0FC63DAF-8483-4772-8E79-3D69D8477DE4", "DOORS-1K", img),
+                   (D2_H_START, D2_H_SECTORS, "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", "DOORS-H", h)])
 
 
 def e4bmap(img, args):
@@ -186,6 +258,7 @@ def main():
             put(c, open(readme, "rb").read(), "MSAMPLES/READ.ME", tmp)
         put(d, README_TXT, "README.TXT", tmp)
         put(e, TINY_TXT, "TINY.TXT", tmp)
+        damage_fat12(e, tmp, False)
 
         # F: ext4 with Linux's default features, filled from a directory tree
         tree = os.path.join(tmp, "ext4root")

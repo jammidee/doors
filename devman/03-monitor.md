@@ -36,7 +36,7 @@ log (`build/serial-run.log` with `doors.bat`) gets every program's text.
 | `jobs` | every job (number, name, running or ended with its error code, task count) and the list of boot modules |
 | `kill N` | ends job `N` (`KillJob`) |
 | `screen N` | shows job `N`'s screen (`SetVidOwner`) |
-| `sync` | marks the ext4 volumes clean (their journals are empty): do it before switching off. The next write marks them in use again |
+| `sync` | marks the ext4 volumes clean (their journals are empty) and clears the dirty flag of the FAT volumes DOORS wrote: do it before switching off. The next write marks them in use again. A FAT volume that was already dirty when DOORS mounted it stays dirty, for a repair tool |
 | `vols` | the volumes: letter, disk, partition, size, type and label |
 | `dir C:\PATH` | lists a directory on any volume (FAT or ext4): date and time, `<DIR>`, size, name |
 | `type C:\FILE` | prints a file |

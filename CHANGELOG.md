@@ -12,6 +12,35 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.6.0 — 2026-10-19 — FAT after a power cut
+- **FAT dirty flag:** the first write after mount sets it in the boot sector, where Linux and
+  `fsck.fat` keep it. The monitor's `sync` and the end of the test runs clear it. A volume that
+  was already dirty at mount stays dirty, as on Linux.
+- **The check at mount** (like `chkdsk` at boot) runs on a volume that was dirty, and reports
+  without repairing:
+  - chains longer or shorter than the file size;
+  - chains that reach a free or bad cluster;
+  - shared clusters;
+  - lost clusters;
+  - FAT copies that differ.
+  It walks the chains in `fsck.fat`'s order, so both name the same problem for the same file.
+- **Read-only when writing is unsafe:** if a chain reaches a cluster the FAT calls free, or two
+  files share clusters, the volume is mounted read-only until it is repaired. The first test run
+  showed why: DOORS's own FAT12 write test reused such a "free" cluster and cross-linked two files.
+  The other problems leave the volume writable. The `Volume` boot line now says `(read-only)`
+  for any file system, not only ext4.
+- **FAT directories** end at 65,536 entries (FAT's limit), so a directory chain that loops back
+  on itself can't keep a walk going forever. A full directory gives `ErcDirFull`.
+- **Tests:**
+  - `make powercut` adds 5 FAT runs. After each random cut, `fsck.fat -n` must find exactly
+    what DOORS's mount check reports, and every finished operation must be on the disk.
+  - In `make test`, E: starts out dirty with the harmless kinds of damage, and a new FAT12 volume
+    H: on the second disk with the unsafe kinds. check_disk compares `fsck.fat`'s findings with
+    DOORS's report for both (new `--log` option) and checks that H: was mounted read-only.
+- **Docs:** PROGRESS.md (what changed when, one row per version); ROADMAP Stage 8, networking.
+- **Known:** `fsck.fat` 4.2 aborts ("Internal error: next_cluster on bad cluster") on a chain
+  that starts with a bad cluster. DOORS reports that case, but there is nothing to compare it with.
+
 ## 1.5.0 — 2026-10-18 — damaged disks can't crash DOORS
 - **`make fuzz`**, a damaged-disk fuzzer. The kernel's volume, FAT, ext4 and block-cache code runs
   unchanged as a Linux program (`tests/fsfuzz/`) with AddressSanitizer and UBSan, and again on a

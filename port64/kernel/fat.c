@@ -18,6 +18,7 @@
 #include <doors/blk.h>
 #include <doors/console.h>
 #include <doors/fs.h>
+#include <doors/mem.h>
 #include <doors/string.h>
 
 struct fat {
@@ -28,6 +29,9 @@ struct fat {
 	U32 spc, rsvd, nfats, fatsz, rootents, totsec, nclus, root_clus, hint, fsinfo;
 	U64 fat_lba, root_lba, data_lba;	/* relative to base */
 	bool fsinfo_done;
+	U32 state_off;				/* boot sector byte with the dirty flag (bit 0); 0 = none */
+	bool dirty;				/* the flag is set on the disk */
+	bool was_dirty;				/* it was set at mount: leave it for fsck/chkdsk */
 };
 
 struct dirent83 {
@@ -42,8 +46,45 @@ static U32 nfat;
 
 /* ---- sectors ---- */
 
-static erc_t rd(struct fat *f, U64 lba, U8 *b)       { return bc_read(f->dev, f->base + lba, b); }
-static erc_t wr(struct fat *f, U64 lba, const U8 *b) { return bc_write(f->dev, f->base + lba, b); }
+static void set_dirty(struct fat *f, bool on);
+static bool fat_check(struct fat *f);
+
+static erc_t rd(struct fat *f, U64 lba, U8 *b) { return bc_read(f->dev, f->base + lba, b); }
+
+/* Every write goes through here: the first one after mount sets the dirty flag first. */
+static erc_t wr(struct fat *f, U64 lba, const U8 *b)
+{
+	if (!f->dirty)
+		set_dirty(f, true);
+	return bc_write(f->dev, f->base + lba, b);
+}
+
+/* The "volume dirty" flag, where Linux's FAT driver and fsck.fat keep it: bit 0 of the boot
+   sector byte after the drive number (offset 37 on FAT12/16, 65 on FAT32), only in the primary
+   boot sector (Linux doesn't touch the backup either), and only if the boot sector has the
+   extended signature (0x28/0x29) that makes that byte part of the BPB. */
+static void set_dirty(struct fat *f, bool on)
+{
+	U8 s[512];
+
+	f->dirty = on;
+	if (!f->state_off || bc_read(f->dev, f->base, s))
+		return;
+	s[f->state_off] = (U8)(on ? s[f->state_off] | 1 : s[f->state_off] & ~1);
+	bc_write(f->dev, f->base, s);
+}
+
+/* A clean unmount of every FAT volume DOORS wrote to: the dirty flag cleared. As ext4_unmount():
+   call it when no file operation runs; writing again sets the flag again. A volume that was
+   dirty when it was mounted stays dirty (as on Linux), so fsck.fat or chkdsk still check it. */
+void fat_unmount(void)
+{
+	U32 i;
+
+	for (i = 0; i < nfat; i++)
+		if (fats[i].dirty && !fats[i].was_dirty)
+			set_dirty(&fats[i], false);
+}
 
 static U16 le16(const U8 *p) { return (U16)(p[0] | (p[1] << 8)); }
 static U32 le32(const U8 *p) { return (U32)p[0] | ((U32)p[1] << 8) | ((U32)p[2] << 16) | ((U32)p[3] << 24); }
@@ -94,9 +135,17 @@ erc_t fat_mount(struct volume *v)
 		f->fsinfo = le16(s + 48);
 		if (s[66] == 0x29)
 			memcpy(v->label, s + 71, 11);
-	} else if (s[38] == 0x29) {
-		memcpy(v->label, s + 43, 11);
+		if (s[66] == 0x28 || s[66] == 0x29)
+			f->state_off = 65;
+	} else {
+		if (s[38] == 0x29)
+			memcpy(v->label, s + 43, 11);
+		if (s[38] == 0x28 || s[38] == 0x29)
+			f->state_off = 37;
 	}
+	f->was_dirty = f->dirty = f->state_off && (s[f->state_off] & 1);
+	if (!f->state_off)
+		f->dirty = true;		/* nowhere to keep the flag: never try */
 	for (rootsecs = 11; rootsecs > 0 && v->label[rootsecs - 1] == ' '; rootsecs--)
 		v->label[rootsecs - 1] = 0;
 	f->hint = 2;
@@ -104,6 +153,14 @@ erc_t fat_mount(struct volume *v)
 	v->ops = &fat_ops;
 	v->kind = f->type == 12 ? VOL_FAT12 : f->type == 16 ? VOL_FAT16 : VOL_FAT32;
 	nfat++;
+	if (f->was_dirty) {
+		kprintf("FAT on %c: was not unmounted cleanly (dirty flag set); checking it\n", v->letter);
+		if (fat_check(f)) {
+			v->ro = true;
+			kprintf("FAT on %c: mounted read-only: writing could join or destroy files until it "
+				"is repaired\n", v->letter);
+		}
+	}
 	return ErcOk;
 }
 
@@ -486,7 +543,7 @@ static erc_t dir_walk(struct fat *f, U32 dclus, bool dots, dir_fn fn, void *ctx)
 	bool lfn_ok = false;
 	erc_t erc;
 
-	for (idx = 0;; idx++) {
+	for (idx = 0; idx < 65536; idx++) {		/* FAT's limit; a looped chain ends here too */
 		erc = dir_read(f, dclus, idx, e);
 		if (erc == ErcNoMatch)
 			break;
@@ -680,12 +737,14 @@ static erc_t find_free(struct fat *f, U32 dclus, U32 count, U32 *start)
 	U32 idx, run = 0;
 	erc_t erc;
 
-	for (idx = 0;; idx++) {
+	for (idx = 0; idx < 65536; idx++) {		/* FAT's limit for a directory */
 		erc = dir_read(f, dclus, idx, e);
 		if (erc == ErcNoMatch || (!erc && e[0] == 0)) {	/* end: everything after is free */
 			*start = run ? idx - run : idx;
 			if (!dclus && *start + count > f->rootents)
 				return ErcRootFull;
+			if (*start + count > 65536)
+				return ErcDirFull;
 			return ErcOk;
 		}
 		if (erc)
@@ -699,6 +758,7 @@ static erc_t find_free(struct fat *f, U32 dclus, U32 count, U32 *start)
 			run = 0;
 		}
 	}
+	return ErcDirFull;
 }
 
 /* Short alias for a long name: up to 6 characters + "~N" + extension. */
@@ -1212,3 +1272,183 @@ const struct fs_ops fat_ops = {
 	.dir_empty = fat_dir_empty,
 	.dir_sector = fat_dir_sector,
 };
+
+/* ---- the check at mount (chkdsk), for a volume whose dirty flag was set ---- */
+
+/* It reports, without repairing, what dosfstools' fsck.fat would find, walking every chain in
+   the order its check_file() does, so both name the same problem for the same file:
+     a chain reaching a free (or bad) cluster        fsck: "Contains a free cluster (N)"
+     a file whose chain has more clusters than its size needs   "cluster chain length is > N"
+     a cluster already in another chain              "... and ... share clusters"
+     a file whose chain is too short for its size    "File size is N bytes, cluster chain length is M"
+     clusters in use that no chain reaches           "Reclaimed N unused clusters"
+     FAT copies that differ                          "FATs differ"
+   Paths use the 8.3 names, as fsck.fat prints them. A power cut can leave each of these: a write
+   grows the chain before it updates the size, a truncate frees the chain before it updates the
+   entry, a delete marks the entry before it frees the chain, a rename adds the new entry before
+   it deletes the old, and every FAT change goes to copy 1, then copy 2. */
+
+#define CHK_DIRS 512				/* directories it descends into */
+#define CHK_SHOW 16				/* problems it prints one by one */
+
+struct chk_dir {
+	U32 clus;
+	char path[MAX_PATH];
+};
+
+static struct {
+	struct fat *f;
+	U8 *own;				/* a bit per cluster: in a chain already */
+	struct chk_dir *dirs;
+	U32 ndirs, problems;
+	bool dirs_full;
+	bool unsafe;				/* a free/bad cluster in a chain, or shared clusters */
+	const char *dpath;			/* the directory being walked */
+} chk;
+
+static bool chk_owned(U32 c) { return chk.own[c >> 3] & (1 << (c & 7)); }
+static void chk_own(U32 c) { chk.own[c >> 3] |= (U8)(1 << (c & 7)); }
+
+static bool chk_bad(struct fat *f, U32 v)
+{
+	return v == (f->type == 12 ? 0xFF7U : f->type == 16 ? 0xFFF7U : 0x0FFFFFF7U);
+}
+
+static void chk_problem(const char *path, const char *what, U64 a, U64 b)
+{
+	if (chk.problems++ < CHK_SHOW) {
+		kprintf("FAT on %c: %s: ", chk.f->vol->letter, path);
+		kprintf(what, a, b);
+		kprintf("\n");
+	}
+}
+
+/* the clusters past a chain's end, as fsck.fat truncates them: theirs, not lost */
+static void chk_own_rest(struct fat *f, U32 c)
+{
+	U32 v, n = 0;
+
+	while (valid_clus(f, c) && !chk_owned(c) && n++ <= f->nclus && !fat_get(f, c, &v) && v &&
+	       !chk_bad(f, v)) {
+		chk_own(c);
+		if (v >= eoc_min(f))
+			break;
+		c = v;
+	}
+}
+
+/* One file or directory's chain; true if its first cluster became its own (walk into it). */
+static bool chk_chain(const char *path, U32 first, U64 size, bool dir)
+{
+	struct fat *f = chk.f;
+	U64 cs = (U64)f->spc * 512, clusters = 0;
+	U32 c = first, v;
+
+	while (valid_clus(f, c) && clusters <= f->nclus) {
+		if (fat_get(f, c, &v))
+			return false;
+		if (!v || chk_bad(f, v)) {
+			chk_problem(path, v ? "its chain reaches a bad cluster (%lu)" :
+				    "its chain reaches a free cluster (%lu)", c, 0);
+			chk.unsafe = true;
+			break;
+		}
+		if (!dir && size <= clusters * cs) {
+			chk_problem(path, "size %lu, but its chain is longer (more than %lu bytes)", size,
+				    clusters * cs);
+			chk_own_rest(f, c);
+			break;
+		}
+		if (chk_owned(c)) {
+			chk_problem(path, "shares clusters with another file (from cluster %lu)", c, 0);
+			chk.unsafe = true;
+			break;
+		}
+		chk_own(c);
+		clusters++;
+		if (v >= eoc_min(f) || !valid_clus(f, v))
+			break;
+		c = v;
+	}
+	if (!dir && size > clusters * cs)
+		chk_problem(path, "size %lu, but its chain holds only %lu bytes", size, clusters * cs);
+	return clusters > 0;
+}
+
+static bool chk_fn(void *ctx, const char *ln, U32 ll, const char *sn, U32 sl, const struct fnode *nd)
+{
+	char path[MAX_PATH];
+	U32 dl = (U32)strlen(chk.dpath);
+	bool dir = nd->attr & ATTR_DIR;
+
+	(void)ctx, (void)ln, (void)ll;
+	if (dl + 1 + sl >= MAX_PATH)
+		return false;
+	memcpy(path, chk.dpath, dl);
+	path[dl] = '\\';
+	memcpy(path + dl + 1, sn, sl);
+	path[dl + 1 + sl] = 0;
+	if (chk_chain(path, nd->first, nd->size, dir) && dir) {
+		if (chk.ndirs == CHK_DIRS) {
+			chk.dirs_full = true;
+		} else {
+			chk.dirs[chk.ndirs].clus = nd->first;
+			memcpy(chk.dirs[chk.ndirs++].path, path, dl + 2 + sl);
+		}
+	}
+	return false;
+}
+
+/* Returns true if writing could do harm: a file reaches a cluster the FAT calls free (the next
+   allocation would give it to a second file too), or two files share clusters (deleting one frees
+   the other's). The other problems only waste space or cut a file short. */
+static bool fat_check(struct fat *f)
+{
+	U64 bits = ((U64)f->nclus + 2 + 7) / 8, bytes = bits + (U64)CHK_DIRS * sizeof(struct chk_dir), s;
+	U32 npages = (U32)((bytes + PAGE_SIZE - 1) / PAGE_SIZE), i, k, v, lost = 0;
+	U8 *mem, a[512], b[512];
+	bool differ = false;
+
+	if (bytes > (32U << 20) || AllocOSPage(npages, &mem)) {
+		kprintf("FAT on %c: too big to check here: run fsck.fat (Linux) or chkdsk\n", f->vol->letter);
+		return false;
+	}
+	memset(mem, 0, bits);
+	memset(&chk, 0, sizeof(chk));
+	chk.f = f;
+	chk.own = mem;
+	chk.dirs = (struct chk_dir *)(mem + bits);
+	chk.dirs[0].clus = 0;				/* the root: "" + "\NAME" */
+	chk.ndirs = 1;
+	if (f->type == 32 && !chk_chain("\\", f->root_clus, 0, true))
+		chk.ndirs = 0;				/* (fsck.fat stops here: root unusable) */
+	for (i = 0; i < chk.ndirs; i++) {
+		chk.dpath = chk.dirs[i].path;
+		dir_walk(f, i == 0 && f->type == 32 ? f->root_clus : chk.dirs[i].clus, false, chk_fn, NULL);
+	}
+	for (i = 2; i < f->nclus + 2; i++)
+		if (!fat_get(f, i, &v) && v && !chk_bad(f, v) && !chk_owned(i))
+			lost++;
+	if (lost) {
+		chk.problems++;
+		kprintf("FAT on %c: %u lost clusters (in use, but in no file's chain)\n", f->vol->letter, lost);
+	}
+	for (k = 1; k < f->nfats && !differ; k++)
+		for (s = 0; s < f->fatsz && !differ; s++)
+			if (!rd(f, f->fat_lba + s, a) && !rd(f, f->fat_lba + (U64)k * f->fatsz + s, b) &&
+			    memcmp(a, b, 512))
+				differ = true;
+	if (differ) {
+		chk.problems++;
+		kprintf("FAT on %c: the FAT copies differ\n", f->vol->letter);
+	}
+	if (chk.dirs_full)
+		kprintf("FAT on %c: (checked the first %u directories only)\n", f->vol->letter, CHK_DIRS);
+	if (chk.problems)
+		kprintf("FAT on %c: check: %u problems; repair it with fsck.fat (Linux) or chkdsk\n",
+			f->vol->letter, chk.problems);
+	else
+		kprintf("FAT on %c: check: no problems found\n", f->vol->letter);
+	DeAllocPage(mem, npages);
+	return chk.unsafe;
+}

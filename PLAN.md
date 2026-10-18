@@ -3,6 +3,7 @@
 How the 64-bit version of DOORS (formerly MMURTL) gets built. This is the execution plan: strategy,
 milestones, verification and workflow. The technical design (module mapping, data structures, file
 system details) is in [docs/PORT64_PLAN.md](docs/PORT64_PLAN.md), and daily progress goes in [devlogs/](devlogs/).
+[PROGRESS.md](PROGRESS.md) lists what changed when: one row per version, with its date, commit and step.
 
 ## Goal
 

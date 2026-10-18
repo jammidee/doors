@@ -15,6 +15,7 @@ DOORS is called stable when all of these hold, and stay true release after relea
 | **No crashes** | 72 hours of random mixed work (files, jobs, messaging, screens) without a kernel panic or hang. Fuzzing the system calls and the file system for 24 hours finds nothing. |
 | **No data loss** | Power cuts at random points never lose a finished file operation and never leave a disk that needs repair. This holds on real disks, not only in QEMU. A damaged disk gives an error, never a crash. |
 | **Bad programs can't hurt the system** | Any program, however buggy or hostile, can only end itself. It can't crash the kernel, read other programs' memory, or use up a resource so others stop working. |
+| **The network can't hurt it** | Once DOORS has a network (Stage 8): no packet, however damaged or hostile, crashes or hangs it, and a flood slows it down without stopping it. |
 | **Runs on real hardware** | Boots and works on at least 5 different real PCs (BIOS and UEFI, SATA and NVMe, USB keyboard) and in VirtualBox, VMware and Hyper-V, not only QEMU. |
 | **Predictable releases** | Every change runs the full test set automatically. Released versions have no known data-loss or crash bugs. The MMURTL API stays compatible. |
 
@@ -32,6 +33,7 @@ DOORS is called stable when all of these hold, and stay true release after relea
 - **Kernel internals:** tables have fixed sizes (64 jobs, 256 tasks, 256 request blocks), there is no kernel heap, and resource exhaustion paths are tested only partly.
 - **Test coverage:** no continuous integration, no fuzzing, no long soak tests.
 - **Security:** no users or file permissions are enforced, and the kernel doesn't use SMEP/SMAP or stack protection.
+- **Networking:** none yet (MMURTL had none either). See Stage 8.
 
 The order below puts stability before features. Each step is a release with a test that proves it.
 
@@ -47,7 +49,7 @@ Data loss is the worst failure an OS can have, so storage comes first.
 | 1.2 | Extent trees deeper than one level on write ✅ (1.3.0) | A heavily fragmented file can be written, cut and grown; e2fsck clean ✅ (480 one-block extents, depth 2, in `make test`; 1,200 passed once but is too slow for every run. 10,000 waits for faster disk I/O) |
 | 1.3 | Write journals with checksums (JBD2 `csum_v3`, the default of newer e2fsprogs) ✅ (1.4.0) | Volumes made by e2fsprogs 1.47 mount read/write; `make powercut` passes on them ✅ (F: has a csum_v3 journal made by `debugfs jo -c`, the same format 1.47 writes; powercut alternates csum_v3 and plain journals) |
 | 1.4 | Damaged disks never crash DOORS: every on-disk value is range-checked ✅ (1.5.0) | A fuzzer that corrupts ext4 and FAT images at random (thousands of images) finds no panic; DOORS reports `ErcBrokenFile` ✅ (`make fuzz`: 9,000 images a run; 30,000 clean after the fixes. It runs the kernel's file system code on Linux with sanitizers, plus a 12 KB guarded stack) |
-| 1.5 | FAT safety: the "dirty" flag set while mounted, and `chkdsk`-style warnings at mount | A power cut on FAT never makes DOORS crash; Linux `fsck.fat` reports what DOORS predicted |
+| 1.5 | FAT safety: the "dirty" flag set while mounted, and `chkdsk`-style warnings at mount ✅ (1.6.0) | A power cut on FAT never makes DOORS crash; Linux `fsck.fat` reports what DOORS predicted ✅ (`make powercut` FAT runs; 30 of 30 matched while it was developed; planted cases of each problem on E: and H: in `make test`; a volume where writing is unsafe is mounted read-only) |
 | 1.6 | ext4 system disk: boot from an ext4 volume (GRUB on the disk), `\DOORS\` on ext4 | `make smoke` passes with C: = ext4 |
 | 1.7 | Free-space and quota edge cases: disk full, inode full, 0-byte files, maximum name lengths | A test fills each volume to 100 % and back; e2fsck clean |
 
@@ -118,18 +120,42 @@ QEMU is friendly. Real machines are not, and this is where most young operating 
 | 7.2 | CLI improvements: wildcards (`*.*`), history, redirection with `SetSysIn`/`SetSysOut`, batch files | The file commands take wildcards; output can go to a file |
 | 7.3 | The **debugger** (MMURTL's, rewritten for 64-bit, with a disassembler): the deferred smoke test row P7 | Smoke test 25/25 |
 | 7.4 | **Installer**: put DOORS on a disk with GRUB, from the ISO | Installs to a real disk and boots from it |
-| 7.5 | **Networking**: a virtio-net/e1000 driver, a TCP/IP stack (for example lwIP), a network service with the MMURTL request model | `ping`, a simple file transfer |
+| 7.5 | **Networking**: its own stage now, [Stage 8](#stage-8-networking-2x--30) | — |
 | 7.6 | **Self-hosting**: CM32 and DASM on 64-bit (and/or a GCC port), so DOORS can build its own programs | A user program is built and run inside DOORS |
 
-## Stage 8: release engineering (from 1.4 on, running alongside)
+## Stage 8: networking (2.x – 3.0)
+
+MMURTL had no network. DOORS adds one the MMURTL way: the network is a **system service**, like
+FILESYS. Programs reach it by name through `Request`/`Respond`, and the driver only moves frames.
+A BSD-socket layer in the C library sits on top, so ported programs work unchanged. Everything is
+tested in QEMU first (user-mode networking, with a host-side peer written in Python), then on the
+hardware lab of Stage 4. Needs PCI (4.3), the kernel heap (3.1) and `malloc` (7.1).
+
+| Step | What | Done when |
+|---|---|---|
+| 8.1 | **Network card drivers**: virtio-net (QEMU, KVM) first, then Intel e1000/e1000e (QEMU, VirtualBox, VMware, many real PCs), with interrupts and DMA rings. A `NETDEV` service sends and receives Ethernet frames; the monitor's `net` command shows the card, MAC address and counters | Frames go both ways with QEMU's user-mode network; counters match the host's capture (`-object filter-dump`) |
+| 8.2 | **IPv4 core**: ARP, IPv4, ICMP and UDP, with a fixed address first | `ping 10.0.2.2` from the monitor gets replies; the host can ping DOORS (QEMU `hostfwd`) |
+| 8.3 | **DHCP and DNS clients**: an address, gateway and DNS server from the network; `resolve NAME` | DOORS gets its address from QEMU's DHCP and from a real router; `resolve` returns the same addresses as the host |
+| 8.4 | **TCP**: connections, retransmission, flow and congestion control, timeouts. Own small stack, or a port of lwIP behind the service, chosen by a spike first | 100 MB transfer to a host peer arrives byte for byte, also with 5 % of packets dropped and reordered by a host-side proxy; 100 connections open and close without a leak |
+| 8.5 | **The `TCPIP` service and its calls**: MMURTL-style request codes (open, connect, listen, accept, send, receive, close) with error codes in `erc.h`; a BSD-socket shim (`socket`, `connect`, `send`, `recv`, `select`, ...) in the C library | A DOORS program fetches a page from the host's web server; a small BSD-socket sample compiles unchanged |
+| 8.6 | **Network tools**: `ping`, `net` (configure and show), a TFTP and HTTP client (`get URL file`), and a file transfer to and from the host | A file copied host → DOORS → host comes back byte for byte, to FAT and to ext4 |
+| 8.7 | **Remote use**: a remote CLI (telnet first, SSH later) and a small HTTP server for files | Two remote sessions and a local CLI work at once; killing a session frees everything |
+| 8.8 | **Robustness**: the packet parsers (Ethernet, ARP, IP, ICMP, UDP, TCP, DHCP, DNS) built for Linux with sanitizers, as `make fuzz` does for the file systems, and fed random and damaged packets; limits on buffers, connections and half-open sockets | Millions of fuzzed packets: no crash, hang or leak; a flood (SYN flood, ping flood) slows DOORS down but doesn't stop the CLI or the disk |
+| 8.9 | **Tests in CI**: `make nettest` boots DOORS in QEMU with a host-side peer and runs 8.1–8.7 | Runs on every push (Stage 2.1) |
+| 8.10 | **Later**: IPv6 (with SLAAC), TLS (a port of BearSSL or mbedTLS) for HTTPS and SSH, a network file system client (NFS or SMB) | Each gets its own test when it is planned |
+
+Security for the network (who may open ports, a default-deny inbound rule) belongs with Stage 6:
+service permissions (6.4) decide which jobs may use `TCPIP`.
+
+## Stage 9: release engineering (from 1.4 on, running alongside)
 
 | Step | What |
 |---|---|
-| 8.1 | Release checklist: CI green, soak 72 h, fuzz 24 h, power-cut test, hardware lab, CHANGELOG, manual updated |
-| 8.2 | Long-term support branch: fixes only, for users who need a version that stays put |
-| 8.3 | Public bug tracker; every bug fix comes with a regression test |
-| 8.4 | Compatibility promise: the MMURTL API (names, parameters, error codes) and the DOORS additions (system calls numbered from 110) never change incompatibly within a major version |
-| 8.5 | Security fixes released quickly, with notes on what was affected |
+| 9.1 | Release checklist: CI green, soak 72 h, fuzz 24 h, power-cut test, network tests, hardware lab, CHANGELOG, manual updated |
+| 9.2 | Long-term support branch: fixes only, for users who need a version that stays put |
+| 9.3 | Public bug tracker; every bug fix comes with a regression test |
+| 9.4 | Compatibility promise: the MMURTL API (names, parameters, error codes) and the DOORS additions (system calls numbered from 110) never change incompatibly within a major version |
+| 9.5 | Security fixes released quickly, with notes on what was affected |
 
 ---
 
@@ -141,9 +167,12 @@ QEMU is friendly. Real machines are not, and this is where most young operating 
    misbehaving services.
 3. **Stage 4 (real hardware)** next. It is the biggest jump in effort, and it is what turns DOORS
    from an emulator project into an OS people can install. It is the natural point for **DOORS 2.0**.
-4. **Stages 5–7** in the order users ask for them. SMP and security matter more for servers; the
-   usable-system steps matter more for hobbyists and teaching.
-5. **Stage 8** starts with continuous integration in Stage 2 and grows with every release.
+4. **Stages 5–8** in the order users ask for them. SMP and security matter more for servers; the
+   usable-system steps matter more for hobbyists and teaching. **Networking (Stage 8)** can start in
+   QEMU as soon as PCI enumeration (4.3) and the kernel heap (3.1) exist, before the rest of
+   Stage 4; ping and UDP (8.1–8.2) need no more than that. TCP and the socket calls want `malloc`
+   (7.1).
+5. **Stage 9** starts with continuous integration in Stage 2 and grows with every release.
 
 Each step follows the same rule as the 64-bit port: a release only when its test passes, the
 manual updated, the CHANGELOG entry written, and the step logged in `devlogs/`.
@@ -158,5 +187,6 @@ manual updated, the CHANGELOG entry written, and the step logged in `devlogs/`.
 | 4 Real hardware | **large** | many drivers, and real-machine debugging is slow |
 | 5 SMP | large | touches every lock in the kernel |
 | 6 Security | medium–large | new concepts (users, permissions) on top of MMURTL's design |
-| 7 Usable system | large | many independent pieces; networking alone is big |
-| 8 Releases | small, ongoing | process more than code |
+| 7 Usable system | large | many independent pieces |
+| 8 Networking | **large** | drivers, a TCP/IP stack, a new service and socket API; TCP alone is big (less if lwIP is ported) |
+| 9 Releases | small, ongoing | process more than code |

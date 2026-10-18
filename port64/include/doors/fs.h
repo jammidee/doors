@@ -42,7 +42,8 @@ struct volume *vol_get(char letter);
 struct volume *vol_index(U32 i);
 
 /* FAT driver (kernel/fat.c), used by the FILESYS service only */
-erc_t fat_mount(struct volume *v);
+erc_t fat_mount(struct volume *v);	/* a volume left dirty is checked (chkdsk-style report) */
+void  fat_unmount(void);		/* clear the dirty flag of the volumes DOORS wrote (clean) */
 bool  fat_bpb_ok(const U8 *sector);	/* plausible FAT boot sector (BPB)? */
 
 /* Internal FAT operations behind the FILESYS service (paths are "C:\DIR\NAME"). */
@@ -128,6 +129,6 @@ erc_t ReadDir(const char *pPath, U32 cbPath, U32 dIndex, struct dir_entry *pEntr
 extern U32 ext4_commit_stop;
 void  ext4_unmount(void);			/* clear needs_recovery (journal empty): a clean shutdown */
 NORETURN void powercut_run(const char *cmdline);
-NORETURN void powercut_check(void);
+NORETURN void powercut_check(const char *cmdline);
 
 #endif

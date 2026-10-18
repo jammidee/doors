@@ -1857,6 +1857,7 @@ void selftest_run(void)
 	test_samples();
 
 	ext4_unmount();				/* the disk is checked by tools/check_disk.py next */
+	fat_unmount();
 	isr_register(8, df_handler);
 	recurse(0);
 	panic("stack overflow did not fault");

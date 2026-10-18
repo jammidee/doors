@@ -50,7 +50,13 @@ contain. The random seed changes on every run and is printed (`seed 42043961256d
 
 After the kernel has written to the test disk, Linux's own tools check it:
 
-- `fsck.fat -n` on C:, D: and E: must report no errors;
+- `fsck.fat -n` on C: and D: must report no errors;
+- E: and H: start out dirty and damaged (mkdisk's `damage_fat12`). E: has a chain longer than its
+  file, a chain too short, a lost cluster and FAT copies that differ: harmless, so it stays
+  writable. H:, a FAT12 partition on the second (GPT) disk, has a chain reaching a free cluster
+  and two files sharing clusters, so DOORS must mount it read-only. On both, `fsck.fat -n` must
+  find exactly that damage, and the serial log (`--log`) must show that DOORS's mount check
+  reported the same;
 - `e2fsck -fn` on F: must report a clean volume;
 - the files the tests wrote are read back with `mtools` (FAT) and `debugfs` (ext4) and compared
   byte for byte, including long names, the 5 GB sparse file, moved directories and deleted files.
@@ -69,7 +75,7 @@ Ctrl-Alt-Del, `monitor` and `exit`. It ends with `PASS n  FAIL n  DEFERRED n` an
 failure. `--only F5,P2` runs just those rows (plus boot and LdCLI); `--keep` leaves the VM running.
 It takes about 1.5 minutes. 1.0.0: 24 PASS, 1 DEFERRED (the debugger, M10).
 
-## `make powercut`: power cuts during ext4 writes
+## `make powercut`: power cuts during ext4 and FAT writes
 
 `make powercut` (`port64/tools/powercut.py`) tests the ext4 journal. Each run builds a fresh disk
 and boots DOORS with the kernel command line `powercut`. DOORS then writes, rewrites, renames
@@ -87,7 +93,17 @@ every checksum DOORS wrote. After each cut:
    file, and it exits cleanly. Then `e2fsck -fn` must be clean **without any repair**, and the model
    must hold again.
 
-`--runs N` (default 5) and `--seed S` choose the runs. It ends with `POWERCUT PASS`.
+Then come the **FAT runs** (`--fat-runs N`, default 5). DOORS boots with `powercut vol=C`, writes
+in `C:\PC` and is cut at a random point. FAT has no journal, so the cut may leave damage:
+
+1. **Linux:** `fsck.fat -n` on a copy must see the dirty flag. Its findings are read into a set,
+   and an unknown line fails the run. mtools must show every finished operation, before any repair.
+2. **DOORS** boots with `pccheck vol=C`. Its mount check must report exactly the findings of
+   `fsck.fat` (the same files, problems and lost-cluster count). Only the files of the operation
+   in progress may be unreadable.
+
+`--runs N` (default 5), `--fat-runs N` and `--seed S` choose the runs. It ends with
+`POWERCUT PASS`, in about 2 minutes.
 
 ## `make fuzz`: damaged disks
 

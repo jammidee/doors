@@ -93,6 +93,13 @@ erc_t AllocOSPage(U32 nPages, U8 **ppMemRet)
 	return ErcOk;
 }
 
+erc_t DeAllocPage(U8 *pOrigMem, U32 nPages)
+{
+	(void)nPages;
+	free(pOrigMem);
+	return ErcOk;
+}
+
 U64 timer_ticks(void) { return 12345; }
 U32 unix_time(void) { return 1790000000U; }
 
@@ -338,6 +345,7 @@ static void workload(void)
 		}
 	}
 	ext4_unmount();
+	fat_unmount();
 }
 
 /* ---- the workload on a small guarded stack (fsfuzz-stk) ---- */

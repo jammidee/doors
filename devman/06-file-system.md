@@ -131,6 +131,53 @@ specification says.
 - Timestamps come from the CMOS clock and are stored as local time, as FAT requires.
 - After every `make test`, Linux's `fsck.fat` checks the volumes DOORS wrote.
 
+### Power cuts on FAT
+
+FAT has no journal. Every change is on the disk when the call returns, but a power cut in the
+middle of a call can leave the volume damaged. DOORS deals with this as Linux and Windows do:
+
+- **The dirty flag.** The first write after mount sets the "volume dirty" bit in the boot sector
+  (byte 37 on FAT12/16, 65 on FAT32, where Linux and `fsck.fat` keep it). The monitor's `sync`
+  clears it again, and so does the end of the test runs. A volume that was already dirty when
+  DOORS mounted it stays dirty until a real repair tool has checked it.
+- **The check at mount.** When the flag is set at mount, DOORS checks the volume, as `chkdsk`
+  does at boot, but it doesn't repair anything. It reports:
+  - files whose cluster chain is longer or shorter than their size;
+  - chains that reach a free or bad cluster;
+  - files that share clusters;
+  - lost clusters (in use, but in no file);
+  - FAT copies that differ.
+  For example:
+
+  ```
+  FAT on C: was not unmounted cleanly (dirty flag set); checking it
+  FAT on C: \PC\F13.BIN: size 20480, but its chain is longer (more than 20480 bytes)
+  FAT on C: 8 lost clusters (in use, but in no file's chain)
+  FAT on C: check: 2 problems; repair it with fsck.fat (Linux) or chkdsk
+  ```
+
+  Its walk follows `fsck.fat`'s order, so both name the same problem for the same file. Paths
+  use the 8.3 names, as `fsck.fat` prints them. The check needs a bitmap of one bit per cluster.
+  On volumes larger than about 256 GB it says "too big to check here" instead.
+- **Read-only when writing is unsafe.** Two kinds of problem can make further writes destroy
+  data:
+  - a chain that reaches a cluster the FAT calls free (the next file to grow would get it too);
+  - two files sharing clusters (deleting one frees the other's).
+
+  With either one, DOORS mounts the volume **read-only** (`FAT on C: mounted read-only ...`, and
+  `(read-only)` in the `Volume` line) until a repair tool has fixed it. The other problems only
+  waste space or cut a file short, so the volume stays writable. A damaged file gives
+  `ErcBrokenFile` when it is read past the damage.
+- **What a cut can leave,** given the order DOORS writes in: a chain longer than the size (a write
+  grows the chain, then updates the size), a free cluster at the start of a chain (a truncate
+  frees the chain, then updates the entry), lost clusters (a delete marks the entry, then frees
+  the chain), two entries for one chain (a rename adds the new entry, then deletes the old one),
+  and FAT copies that differ (each change goes to FAT 1, then FAT 2). None of these loses a
+  finished call's data.
+- **Tests:** `make powercut` cuts power during FAT writes, and `fsck.fat` must find exactly what
+  DOORS reports. In `make test`, E: starts out dirty with the harmless kinds of damage (it stays
+  writable), and H: on the second disk with the unsafe kinds (it is mounted read-only).
+
 ## ext4
 
 `kernel/ext4.c` reads and writes volumes made by Linux's `mkfs.ext4` with its default features:

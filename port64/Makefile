@@ -90,6 +90,10 @@ TEST_ARGS := \
 	--expect "fsuser: all file calls from ring 3 ok" \
 	--expect "M7: file calls from ring 3 ok" \
 	--expect "DOORS: M7 OK" \
+	--expect "FAT on E: was not unmounted cleanly (dirty flag set); checking it" \
+	--expect "FAT on E: check: 4 problems" \
+	--expect "FAT on H: check: 5 problems" \
+	--expect "FAT on H: mounted read-only" \
 	--expect "ext4 on F: a block logged in transaction 2 has a bad checksum: the log ends there" \
 	--expect "ext4 on F: journal replayed: 1 transactions, 1 blocks" \
 	--expect "M8: ext4 read ok" \
@@ -197,8 +201,14 @@ $(ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 $(TEST_ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 	$(call mkiso,$@,test)
 
-# Power-cut test (tools/powercut.py): a writer, a writer that stops inside a journal commit, a checker
-PC_ISOS := $(BUILD)/doors-pc.iso $(BUILD)/doors-pcstop.iso $(BUILD)/doors-pccheck.iso
+# Power-cut test (tools/powercut.py): a writer, a writer that stops inside a journal commit, a checker;
+# and a writer and checker on FAT (C:)
+PC_ISOS := $(BUILD)/doors-pc.iso $(BUILD)/doors-pcstop.iso $(BUILD)/doors-pccheck.iso \
+	$(BUILD)/doors-pcfat.iso $(BUILD)/doors-pcfatcheck.iso
+$(BUILD)/doors-pcfat.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
+	$(call mkiso,$@,powercut vol=C)
+$(BUILD)/doors-pcfatcheck.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
+	$(call mkiso,$@,pccheck vol=C)
 $(BUILD)/doors-pc.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 	$(call mkiso,$@,powercut)
 $(BUILD)/doors-pcstop.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
@@ -234,7 +244,7 @@ test: $(TEST_ISO) $(USER_ELFS)
 	python3 tools/mkdisk.py $(TEST_DISK) $(MKDISK_ARGS) --disk2 $(TEST_DISK2)
 	python3 tools/qemu_test.py --iso $(TEST_ISO) --disk $(TEST_DISK) --disk2 $(TEST_DISK2) \
 		--log $(BUILD)/serial.log --timeout $(TEST_TIMEOUT) $(TEST_ARGS)
-	python3 tools/check_disk.py $(TEST_DISK) $(TEST_DISK2)
+	python3 tools/check_disk.py $(TEST_DISK) $(TEST_DISK2) --log $(BUILD)/serial.log
 
 # Kill QEMU in the middle of journaled ext4 writes, then check the disk with Linux and DOORS
 powercut: $(PC_ISOS) $(USER_ELFS)

@@ -41,6 +41,7 @@ next steps. Keep it factual and include file:line references and commit hashes.
 | `port64/` | DOORS 64-bit (see below). |
 | `devman/` | DOORS System Manual (Markdown, 11 chapters). Update it when commands, calls, error codes, limits or tools change. |
 | `CHANGELOG.md` | DOORS version history. |
+| `PROGRESS.md` | What changed when: one row per version (date, commit, PLAN/ROADMAP step, devlog). |
 | `ROADMAP.md` | The way from 1.x to a stable OS: stages, steps and the test that proves each one. |
 | `PROBLEM-SOLN.md` | PROBLEMS.TXT side by side with what DOORS has solved. |
 
@@ -124,7 +125,8 @@ make debug    # QEMU waits for gdb on :1234
 
 - `port64/VERSION` holds `MAJOR.MINOR.PATCH`. It was `0.M.P` until the port matched MMURTL (`M` = milestone);
   `P` = changes within it. M9 (user land, smoke test passing) = `1.0.0`. After that, semantic versioning.
-- Every commit that changes the system bumps the version, adds a `CHANGELOG.md` entry, and is tagged
+- Every commit that changes the system adds a row to `PROGRESS.md` (date, version, commit, PLAN/ROADMAP step,
+  devlog; a commit can't contain its own hash, so the next commit fills it in), bumps the version, adds a `CHANGELOG.md` entry, and is tagged
   `vX.Y.Z` (annotated). Past milestones are tagged v0.1.0 (M1) … v0.8.0 (M8).
 - The Makefile generates `build/gen/doors/version.h` (`DOORS_VERSION`, `DOORS_COMMIT` from
   `git describe --always --dirty`). Only `kernel/main.c` includes it: the banner, GRUB menu and the monitor's
