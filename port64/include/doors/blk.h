@@ -49,6 +49,7 @@ void ata_init(void);			/* probes the 4 ATA positions, registers 12..15 */
 void  bc_init(void);
 erc_t bc_read(struct blkdev *d, U64 lba, void *dst);
 erc_t bc_write(struct blkdev *d, U64 lba, const void *src);
+erc_t bc_write_n(struct blkdev *d, U64 lba, U32 n, const void *src);	/* one device command */
 void  bc_invalidate(struct blkdev *d, U64 lba, U32 n);
 void  bc_stats(U64 *hits, U64 *misses);
 

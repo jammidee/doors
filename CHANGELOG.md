@@ -12,6 +12,22 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.3.0 — 2026-10-18 — M8b: deep extent trees on write
+- **Extent trees of any depth up to 4** are written: leaf and index node splits, the inode root
+  moving down a level when it is full, and truncation at any depth that frees the nodes it empties.
+  Before, a file needing more than one index level got `ErcNotSupported`.
+- **Faster journal commits:**
+  - Only the 512-byte sectors that really changed are logged and checkpointed. A block that was
+    written but did not change is not logged at all.
+  - The journal superblock's first sector is kept in memory, and a commit rewrites only that
+    sector (`s_sequence`, `s_start`).
+  - Whole blocks and runs of sectors go to the disk in one ATA command (`bc_write_n`) instead of
+    one command and one cache flush per sector.
+  - The ext4 stress test went from 99 s to 63 s, before the multi-sector writes.
+- **Test:** on G:, a file written as 400 one-block fragments is cut to 200 and grown to 480 (a
+  depth-2 tree), and another 400-fragment file is deleted. check_disk verifies the tree with
+  debugfs, and `e2fsck -fn` checks it.
+
 ## 1.2.0 — 2026-10-18 — M8b: writing big (htree) directories
 - **htree directory writes:** names go into Linux's hash-indexed directories through the index:
   half_md4/tea/legacy hashes (signed and unsigned), leaf splits, index node splits, a full root

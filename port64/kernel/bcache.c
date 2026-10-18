@@ -103,6 +103,32 @@ erc_t bc_write(struct blkdev *d, U64 lba, const void *src)
 	return ErcOk;
 }
 
+/* n consecutive sectors in one device command (one ATA write and one flush instead of n of each),
+   then into the cache like bc_write. */
+erc_t bc_write_n(struct blkdev *d, U64 lba, U32 n, const void *src)
+{
+	const U8 *s = src;
+	U32 i;
+	erc_t erc;
+
+	if (n == 1)
+		return bc_write(d, lba, src);
+	if ((erc = blk_io(d, CmdWrite, lba, n, (U8 *)(uintptr_t)s)))
+		return erc;
+	for (i = 0; i < n; i++) {
+		struct cbuf *b = find(d, lba + i);
+
+		if (!b)
+			b = victim();
+		memcpy(bytes(b), s + (U64)i * 512, 512);
+		b->dev = d;
+		b->lba = lba + i;
+		b->valid = true;
+		b->used = ++clock;
+	}
+	return ErcOk;
+}
+
 void bc_invalidate(struct blkdev *d, U64 lba, U32 n)
 {
 	U32 i;

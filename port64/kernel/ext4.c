@@ -15,8 +15,8 @@
      every finished operation in it (`make powercut`). Journals with checksum features are
      replayed but the volume is then mounted read-only; volumes without a journal are written
      directly, as before.
-   - extent trees up to depth 1 (4 extents in the inode, then up to 4 leaf blocks of 340 each);
-     a deeper tree (written by Linux) is read fine but not modified (ErcNotSupported).
+   - extent trees of any depth up to 4 (see "extents: writing"): leaves and index nodes split,
+     the inode root moves down a level when full, and truncation frees nodes it empties.
    - directories with an htree index (Linux makes them for big directories) are written too, with
      one or two index levels (see "htree" below); DOORS's own new directories stay plain lists.
    - groups that mkfs left uninitialised (BLOCK_UNINIT, INODE_UNINIT) get their bitmaps built on
@@ -94,13 +94,15 @@ struct ext4 {
 	U32 jincompat, jtag;		/* journal incompat features, descriptor tag size */
 	U32 txmax;			/* blocks per transaction */
 	U8 juuid[16];
+	U64 jsb_sec;			/* the journal superblock's first sector ... */
+	U8 jsb0[512];			/* ... and its contents */
 };
 
 static struct ext4 exts[MAX_VOLS];
 static U32 next_ext;
 
 /* scratch blocks (one FILESYS task, never re-entered) */
-static U8 b_gd[MAXBS], b_bm[MAXBS], b_leaf[MAXBS], b_leaf2[MAXBS], b_dir[MAXBS], b_data[MAXBS];
+static U8 b_gd[MAXBS], b_bm[MAXBS], b_leaf[MAXBS], b_dir[MAXBS], b_data[MAXBS];
 
 static U16 le16(const U8 *p) { return (U16)(p[0] | (p[1] << 8)); }
 static U32 le32(const U8 *p) { return (U32)p[0] | ((U32)p[1] << 8) | ((U32)p[2] << 16) | ((U32)p[3] << 24); }
@@ -121,6 +123,7 @@ static struct {
 	struct ext4 *e;			/* volume of the open transaction, NULL = none */
 	U32 n;
 	U64 blk[TXMAX];
+	U8 dirty[TXMAX];		/* changed 512-byte sectors of each block (bit per sector) */
 	U8 *img;			/* TXMAX * MAXBS bytes (AllocOSPage, first journaled mount) */
 } tx;
 
@@ -152,13 +155,7 @@ static erc_t disk_rd(struct ext4 *e, U64 b, U8 *buf)
 
 static erc_t bwr(struct ext4 *e, U64 b, const U8 *buf)
 {
-	U32 i;
-	erc_t erc;
-
-	for (i = 0; i < e->spb; i++)
-		if ((erc = bc_write(e->dev, e->base + b * e->spb + i, buf + i * 512)))
-			return erc;
-	return ErcOk;
+	return bc_write_n(e->dev, e->base + b * e->spb, e->spb, buf);	/* the whole block in one command */
 }
 
 static erc_t brd(struct ext4 *e, U64 b, U8 *buf)
@@ -184,8 +181,23 @@ static erc_t tx_take(struct ext4 *e, U64 b, S32 *slot)
 	if ((erc = disk_rd(e, b, tx.img + (U64)tx.n * MAXBS)))
 		return erc;
 	tx.blk[tx.n] = b;
+	tx.dirty[tx.n] = 0;
 	*slot = (S32)tx.n++;
 	return ErcOk;
+}
+
+/* copy buf into the slot's image, marking the sectors that really change */
+static void tx_put(struct ext4 *e, S32 s, U32 off, const U8 *buf, U32 len)
+{
+	U8 *img = tx.img + (U64)s * MAXBS;
+	U32 i;
+
+	for (i = off / 512; i < (off + len) / 512; i++)
+		if (memcmp(img + i * 512, buf + (i * 512 - off), 512)) {
+			memcpy(img + i * 512, buf + (i * 512 - off), 512);
+			tx.dirty[s] |= (U8)(1 << i);
+		}
+	(void)e;
 }
 
 /* metadata block write: into the transaction, or straight to disk without a journal */
@@ -198,7 +210,7 @@ static erc_t mwr(struct ext4 *e, U64 b, const U8 *buf)
 		return bwr(e, b, buf);
 	if ((erc = tx_take(e, b, &s)))
 		return erc;
-	memcpy(tx.img + (U64)s * MAXBS, buf, e->bs);
+	tx_put(e, s, 0, buf, e->bs);
 	return ErcOk;
 }
 
@@ -222,7 +234,7 @@ static erc_t secwr(struct ext4 *e, U64 sec, const U8 *buf)
 		return bc_write(e->dev, sec, buf);
 	if ((erc = tx_take(e, (sec - e->base) / e->spb, &s)))
 		return erc;
-	memcpy(tx.img + (U64)s * MAXBS + ((sec - e->base) % e->spb) * 512, buf, 512);
+	tx_put(e, s, (U32)((sec - e->base) % e->spb) * 512, buf, 512);
 	return ErcOk;
 }
 
@@ -931,7 +943,7 @@ static erc_t ifree(struct ext4 *e, U32 ino, bool dir)
 	return sb_write(e);
 }
 
-/* ---- extents: writing (depth 0 and 1) ---- */
+/* ---- extents: writing (any depth) ---- */
 
 static U32 leaf_max(struct ext4 *e) { return (e->bs - 12) / 12; }
 
@@ -978,85 +990,192 @@ static bool ext_insert(U8 *h, U32 lblk, U64 pblk, U32 len)
 	return true;
 }
 
+/* An extent tree of any depth (Linux ext4_ext_insert_extent, simplified): the root is the
+   inode's 4-entry array; below it index blocks ({ ei_block, child } sorted by ei_block) and, at
+   depth 0, leaves of extents. A full node is split in half into a new block, which adds an entry
+   to its parent; a full root grows the tree by a level (its entries move into a new block). */
+
+#define EXT_MAXDEPTH 5
+static U8 lv[EXT_MAXDEPTH][MAXBS], lvs[EXT_MAXDEPTH][MAXBS];	/* a node and its new sibling per level */
+
+static U32 ext_first(const U8 *h) { return le32(h + 12); }	/* first key: ee_block / ei_block */
+static U64 idx_child(const U8 *ix) { return le32(ix + 4) | ((U64)le16(ix + 8) << 32); }
+
+static void idx_set(U8 *ix, U32 lblk, U64 child)
+{
+	put32(ix, lblk);
+	put32(ix + 4, (U32)child);
+	put16(ix + 8, (U32)(child >> 32));
+	put16(ix + 10, 0);
+}
+
+/* insert { lblk, child } into a sorted index node; false if full */
+static bool idx_insert(U8 *h, U32 lblk, U64 child)
+{
+	U32 n = le16(h + 2), i;
+	U8 *ix;
+
+	if (n == le16(h + 4))
+		return false;
+	for (i = 0; i < n && le32(h + 12 + 12 * i) < lblk; i++)
+		;
+	ix = h + 12 + 12 * i;
+	memmove(ix + 12, ix, 12 * (n - i));
+	idx_set(ix, lblk, child);
+	put16(h + 2, n + 1);
+	return true;
+}
+
+static void node_init(struct ext4 *e, U8 *h, U32 depth)
+{
+	memset(h, 0, e->bs);
+	put16(h, EXT_MAGIC);
+	put16(h + 4, leaf_max(e));
+	put16(h + 6, depth);
+}
+
+/* Split node h (depth d, a block) in half into sibling s at a new block; *key = s's first key. */
+static erc_t node_split(struct ext4 *e, U8 *raw, U8 *h, U8 *s, U32 d, U64 goal, U64 *sblk, U32 *key)
+{
+	U32 n = le16(h + 2), half = n / 2, got;
+	erc_t erc;
+
+	if ((erc = balloc(e, goal, 1, sblk, &got)))
+		return erc;
+	add_blocks(e, raw, 1);
+	node_init(e, s, d);
+	put16(s + 2, n - half);
+	memcpy(s + 12, h + 12 + 12 * half, 12 * (n - half));
+	memset(h + 12 + 12 * half, 0, 12 * (n - half));
+	put16(h + 2, half);
+	*key = ext_first(s);
+	return ErcOk;
+}
+
+#define EXT_ROOT_FULL 1000		/* internal: the inode root must grow first */
+
+/* Insert into the subtree of node h (depth d >= 1; blk = its block, 0 for the inode root). If h
+   had to split, *split is set with the new sibling's key and block for the parent. */
+static erc_t ext_ins(struct ext4 *e, U32 ino, U8 *raw, U8 *h, U32 d, U64 blk, U32 lblk, U64 pblk,
+		     U32 len, bool *split, U32 *skey, U64 *sblk)
+{
+	U32 n = le16(h + 2), i, ckey;
+	U8 *ix, *c = lv[d - 1], *cs = lvs[d - 1];
+	U64 cblk, cs_blk;
+	bool csplit = false;
+	erc_t erc;
+
+	*split = false;
+	for (i = n; i > 1 && le32(h + 12 + 12 * (i - 1)) > lblk; i--)
+		;
+	ix = h + 12 + 12 * (i - 1);
+	cblk = idx_child(ix);
+	if ((erc = brd(e, cblk, c)))
+		return erc;
+	if (le16(c) != EXT_MAGIC || le16(c + 6) != d - 1)
+		return ErcBrokenFile;
+	if (d - 1 == 0) {				/* the child is a leaf */
+		if (!ext_insert(c, lblk, pblk, len)) {
+			U32 k;
+
+			if ((erc = node_split(e, raw, c, cs, 0, cblk, &cs_blk, &ckey)))
+				return erc;
+			k = lblk >= ckey ? 1 : 0;
+			if (!ext_insert(k ? cs : c, lblk, pblk, len))
+				return ErcBrokenFile;
+			if ((erc = leaf_write(e, ino, raw, cs_blk, cs)))
+				return erc;
+			csplit = true;
+		}
+		if ((erc = leaf_write(e, ino, raw, cblk, c)))
+			return erc;
+	} else {
+		bool s2;
+		U32 k2;
+		U64 b2;
+
+		if ((erc = ext_ins(e, ino, raw, c, d - 1, cblk, lblk, pblk, len, &s2, &k2, &b2)))
+			return erc;
+		if (s2 && !idx_insert(c, k2, b2)) {	/* the child index node is full: split it */
+			if ((erc = node_split(e, raw, c, cs, d - 1, cblk, &cs_blk, &ckey)))
+				return erc;
+			if (!idx_insert(k2 >= ckey ? cs : c, k2, b2))
+				return ErcBrokenFile;
+			if ((erc = leaf_write(e, ino, raw, cs_blk, cs)))
+				return erc;
+			csplit = true;
+		}
+		if ((erc = leaf_write(e, ino, raw, cblk, c)))	/* its keys may have changed too */
+			return erc;
+	}
+	if (lblk < le32(ix))				/* a new first key below the old one */
+		put32(ix, lblk);
+	if (csplit) {
+		*split = true;
+		*skey = ckey;
+		*sblk = cs_blk;
+	}
+	(void)blk;
+	return ErcOk;
+}
+
+/* The inode root moves into a new block one level down; the root keeps one entry for it. */
+static erc_t ext_grow(struct ext4 *e, U32 ino, U8 *raw)
+{
+	U8 *root = raw + 0x28, *b = lvs[EXT_MAXDEPTH - 1];
+	U32 d = le16(root + 6), got;
+	U64 nb;
+	erc_t erc;
+
+	if (d + 1 >= EXT_MAXDEPTH)
+		return ErcNotSupported;
+	if ((erc = balloc(e, 0, 1, &nb, &got)))
+		return erc;
+	add_blocks(e, raw, 1);
+	node_init(e, b, d);
+	put16(b + 2, le16(root + 2));
+	memcpy(b + 12, root + 12, 12 * le16(root + 2));
+	if ((erc = leaf_write(e, ino, raw, nb, b)))
+		return erc;
+	memset(root + 12, 0, 48);
+	put16(root + 2, 1);
+	put16(root + 6, d + 1);
+	idx_set(root + 12, ext_first(b), nb);
+	return ErcOk;
+}
+
 static erc_t ext_add(struct ext4 *e, U32 ino, U8 *raw, U32 lblk, U64 pblk, U32 len)
 {
 	U8 *root = raw + 0x28;
+	bool split;
+	U32 skey;
+	U64 sblk;
 	erc_t erc;
 
+	if (le16(root + 6) >= EXT_MAXDEPTH)
+		return ErcBrokenFile;
 	if (le16(root + 6) == 0) {
 		if (ext_insert(root, lblk, pblk, len))
 			return ErcOk;
-		/* root full: move its extents into a new leaf, root becomes an index (depth 1) */
-		{
-			U64 lb;
-			U32 got;
-
-			if ((erc = balloc(e, pblk, 1, &lb, &got)))
-				return erc;
-			add_blocks(e, raw, 1);
-			memset(b_leaf, 0, e->bs);
-			put16(b_leaf, EXT_MAGIC);
-			put16(b_leaf + 2, le16(root + 2));
-			put16(b_leaf + 4, leaf_max(e));
-			memcpy(b_leaf + 12, root + 12, 12 * le16(root + 2));
-			if ((erc = leaf_write(e, ino, raw, lb, b_leaf)))
-				return erc;
-			put16(root + 2, 1);
-			put16(root + 6, 1);
-			put32(root + 12, le32(b_leaf + 12));		/* ei_block */
-			put32(root + 16, (U32)lb);			/* ei_leaf_lo */
-			put16(root + 20, (U32)(lb >> 32));		/* ei_leaf_hi */
-			put16(root + 22, 0);
-		}
-	}
-	if (le16(root + 6) != 1)
-		return ErcNotSupported;			/* deeper trees: read only for now */
-	{
-		U32 n = le16(root + 2), i;
-		U8 *ix;
-		U64 lb;
-
-		for (i = n; i > 1 && le32(root + 12 + 12 * (i - 1)) > lblk; i--)
-			;
-		ix = root + 12 + 12 * (i - 1);
-		lb = le32(ix + 4) | ((U64)le16(ix + 8) << 32);
-		if ((erc = brd(e, lb, b_leaf)))
+		if ((erc = ext_grow(e, ino, raw)))	/* root leaf full: depth 0 -> 1 */
 			return erc;
-		if (ext_insert(b_leaf, lblk, pblk, len)) {
-			if (lblk < le32(ix))
-				put32(ix, lblk);
-			return leaf_write(e, ino, raw, lb, b_leaf);
-		}
-		/* leaf full: split it in two */
-		if (n == 4)
-			return ErcNotSupported;		/* > 4 leaves (> 1360 extents) */
-		{
-			U32 half = le16(b_leaf + 2) / 2, rest = le16(b_leaf + 2) - half;
-			U64 nb;
-			U32 got;
-
-			if ((erc = balloc(e, lb, 1, &nb, &got)))
-				return erc;
-			add_blocks(e, raw, 1);
-			memset(b_leaf2, 0, e->bs);
-			put16(b_leaf2, EXT_MAGIC);
-			put16(b_leaf2 + 2, rest);
-			put16(b_leaf2 + 4, leaf_max(e));
-			memcpy(b_leaf2 + 12, b_leaf + 12 + 12 * half, 12 * rest);
-			put16(b_leaf + 2, half);
-			memset(b_leaf + 12 + 12 * half, 0, 12 * rest);
-			if ((erc = leaf_write(e, ino, raw, lb, b_leaf)) ||
-			    (erc = leaf_write(e, ino, raw, nb, b_leaf2)))
-				return erc;
-			memmove(ix + 24, ix + 12, 12 * (n - i));
-			put32(ix + 12, le32(b_leaf2 + 12));
-			put32(ix + 16, (U32)nb);
-			put16(ix + 20, (U32)(nb >> 32));
-			put16(ix + 22, 0);
-			put16(root + 2, n + 1);
-		}
-		return ext_add(e, ino, raw, lblk, pblk, len);	/* now there is room */
 	}
+	if ((erc = ext_ins(e, ino, raw, root, le16(root + 6), 0, lblk, pblk, len, &split, &skey, &sblk)))
+		return erc;
+	if (split && !idx_insert(root, skey, sblk)) {
+		/* the root index is full: grow a level, the new entry goes into the new block */
+		U8 *b = lvs[EXT_MAXDEPTH - 1];
+		U64 nb;
+
+		if ((erc = ext_grow(e, ino, raw)))
+			return erc;
+		nb = idx_child(root + 12);
+		if (!idx_insert(b, skey, sblk))
+			return ErcBrokenFile;
+		if ((erc = leaf_write(e, ino, raw, nb, b)))
+			return erc;
+	}
+	return ErcOk;
 }
 
 /* Free every block at logical >= keep. */
@@ -1091,41 +1210,65 @@ static erc_t ext_cut_array(struct ext4 *e, U8 *raw, U8 *h, U32 keep)
 	return ErcOk;
 }
 
-static erc_t ext_truncate(struct ext4 *e, U32 ino, U8 *raw, U32 keep)
+/* Truncate the subtree of index node h (depth d >= 1): children are cut from the bottom up, and
+   a child left empty is freed and its entry removed. */
+static erc_t ext_cut_tree(struct ext4 *e, U32 ino, U8 *raw, U8 *h, U32 d, U32 keep)
 {
-	U8 *root = raw + 0x28;
-	U32 depth = le16(root + 6), n, i, w = 0;
+	U32 n = le16(h + 2), i, w = 0;
+	U8 *c = lv[d - 1];
 	erc_t erc;
 
-	if (depth == 0)
-		return ext_cut_array(e, raw, root, keep);
-	if (depth != 1)
-		return ErcNotSupported;
-	n = le16(root + 2);
 	for (i = 0; i < n; i++) {
-		U8 *ix = root + 12 + 12 * i;
-		U64 lb = le32(ix + 4) | ((U64)le16(ix + 8) << 32);
+		U8 *ix = h + 12 + 12 * i;
+		U64 cb = idx_child(ix);
 
-		if ((erc = brd(e, lb, b_leaf)) || (erc = ext_cut_array(e, raw, b_leaf, keep)))
+		if (i + 1 < n && le32(h + 12 + 12 * (i + 1)) <= keep) {	/* wholly below keep */
+			if (w != i)
+				memcpy(h + 12 + 12 * w, ix, 12);
+			w++;
+			continue;
+		}
+		if ((erc = brd(e, cb, c)))
 			return erc;
-		if (!le16(b_leaf + 2)) {		/* leaf now empty: free it */
-			if ((erc = bfree(e, lb, 1)))
+		if (le16(c) != EXT_MAGIC || le16(c + 6) != d - 1)
+			return ErcBrokenFile;
+		erc = d - 1 ? ext_cut_tree(e, ino, raw, c, d - 1, keep) : ext_cut_array(e, raw, c, keep);
+		if (erc)
+			return erc;
+		if (!le16(c + 2)) {			/* the child is empty now: free it */
+			if ((erc = bfree(e, cb, 1)))
 				return erc;
 			add_blocks(e, raw, -1);
 			continue;
 		}
-		if ((erc = leaf_write(e, ino, raw, lb, b_leaf)))
+		if ((erc = leaf_write(e, ino, raw, cb, c)))
 			return erc;
 		if (w != i)
-			memcpy(root + 12 + 12 * w, ix, 12);
+			memcpy(h + 12 + 12 * w, ix, 12);
 		w++;
 	}
-	memset(root + 12 + 12 * w, 0, 12 * (n - w));
-	put16(root + 2, w);
-	if (!w)
+	memset(h + 12 + 12 * w, 0, 12 * (n - w));
+	put16(h + 2, w);
+	return ErcOk;
+}
+
+static erc_t ext_truncate(struct ext4 *e, U32 ino, U8 *raw, U32 keep)
+{
+	U8 *root = raw + 0x28;
+	U32 depth = le16(root + 6);
+	erc_t erc;
+
+	if (depth == 0)
+		return ext_cut_array(e, raw, root, keep);
+	if (depth >= EXT_MAXDEPTH)
+		return ErcBrokenFile;
+	if ((erc = ext_cut_tree(e, ino, raw, root, depth, keep)))
+		return erc;
+	if (!le16(root + 2))
 		put16(root + 6, 0);			/* back to an empty depth-0 tree */
 	return ErcOk;
 }
+
 
 /* ---- file data: writing ---- */
 
@@ -2134,15 +2277,13 @@ static U32 jnext(struct ext4 *e, U32 lblk)
 }
 
 /* the journal superblock with a new s_start and s_sequence (= e->jseq) */
+/* Only its first sector changes (s_sequence 0x18, s_start 0x1C): that sector is kept in memory
+   (journal_mount) and written alone, one atomic sector write. */
 static erc_t jsb_write(struct ext4 *e, U32 start)
 {
-	erc_t erc;
-
-	if ((erc = jread(e, 0, b_j)))
-		return erc;
-	pbe32(b_j + 0x18, e->jseq);
-	pbe32(b_j + 0x1C, start);
-	return jwrite(e, 0, b_j);
+	pbe32(e->jsb0 + 0x18, e->jseq);
+	pbe32(e->jsb0 + 0x1C, start);
+	return bc_write(e->dev, e->jsb_sec, e->jsb0);
 }
 
 /* Tags of a descriptor block: calls fn(home block, flags, ctx) for each; returns their number. */
@@ -2285,6 +2426,14 @@ static erc_t journal_mount(struct ext4 *e, bool *ro)
 	start = be32(b_j + 0x1C);
 	e->jincompat = type == JBD2_SB_V2 ? be32(b_j + 0x28) : 0;
 	memcpy(e->juuid, b_j + 0x30, 16);
+	memcpy(e->jsb0, b_j, 512);
+	{
+		U64 p;
+
+		if ((erc = jmap(e, 0, &p)))
+			return erc;
+		e->jsb_sec = e->base + p * e->spb;
+	}
 	if (e->jincompat & ~JI_OK) {
 		kprintf("ext4 on %c: journal features %x not supported\n", e->vol->letter, e->jincompat);
 		return ErcNotSupported;
@@ -2366,6 +2515,20 @@ static erc_t tx_commit(void)
 
 	if (!tx.n)
 		return ErcOk;
+	/* blocks that were written but didn't change need no logging */
+	for (k = 0; k < tx.n; k++)
+		if (tx.dirty[k]) {
+			if (i != k) {
+				tx.blk[i] = tx.blk[k];
+				tx.dirty[i] = tx.dirty[k];
+				memcpy(tx.img + (U64)i * MAXBS, tx.img + (U64)k * MAXBS, e->bs);
+			}
+			i++;
+		}
+	tx.n = i;
+	i = 0;
+	if (!tx.n)
+		return ErcOk;
 	/* 1. descriptor(s) + blocks, then the commit block (needs_recovery has been set since mount) */
 	while (i < tx.n) {
 		U32 first = i, off = 12, last = 0;
@@ -2426,10 +2589,24 @@ static erc_t tx_commit(void)
 		for (;;)
 			hlt();
 	}
-	/* 3. checkpoint: every block to its home (a torn write here is repaired by the replay) */
-	for (k = 0; k < tx.n; k++)
-		if ((erc = bwr(e, tx.blk[k], tx.img + (U64)k * MAXBS)))
-			return erc;
+	/* 3. checkpoint: the changed sectors of every block to its home (a torn or partial write here
+	   is repaired by the replay, which rewrites whole blocks) */
+	for (k = 0; k < tx.n; k++) {
+		U32 s = 0, r;
+
+		while (s < e->spb) {			/* each run of changed sectors in one command */
+			if (!(tx.dirty[k] & (1 << s))) {
+				s++;
+				continue;
+			}
+			for (r = s + 1; r < e->spb && (tx.dirty[k] & (1 << r)); r++)
+				;
+			if ((erc = bc_write_n(e->dev, e->base + tx.blk[k] * e->spb + s, r - s,
+					      tx.img + (U64)k * MAXBS + s * 512)))
+				return erc;
+			s = r;
+		}
+	}
 	/* 4. the journal is empty again */
 	e->jseq++;
 	if ((erc = jsb_write(e, 0)))

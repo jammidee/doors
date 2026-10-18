@@ -182,7 +182,7 @@ ext4 volumes made by `mkfs.ext4` have a journal (JBD2), and DOORS uses it as Lin
 | Unknown read-only features, old block-mapped (ext2/3-style) volumes, a journal with checksum features or an external journal | mounted read-only |
 | Unknown incompatible features (encryption, inline data, ...) | not mounted |
 | A directory with a 3-level htree index (`largedir`, millions of files) | writing gives `ErcDirFull`; reading works. Indexes with 1 or 2 levels, which Linux makes for big directories, are written normally |
-| Writing a file whose extent tree is deeper than 1 level (very fragmented, written by Linux) | `ErcNotSupported`. Reading works at any depth |
+| Writing a file whose extent tree is 5 levels deep (the ext4 maximum; with 4 KB blocks, 4 levels already hold over 50 billion extents) | `ErcBrokenFile`. Reading works at any depth. Trees up to depth 4 grow, split and shrink normally |
 | Reading a block-mapped (ext2/3-style) file | `ErcNotSupported` |
 
 On a read-only volume, every call that would change something returns `ErcReadOnly`.

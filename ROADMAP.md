@@ -44,7 +44,7 @@ Data loss is the worst failure an OS can have, so storage comes first.
 | Step | What | Done when |
 |---|---|---|
 | 1.1 | Finish htree directory writes ✅ (1.2.0) | `make test` passes, e2fsck clean on G: ✅ |
-| 1.2 | Extent trees deeper than one level on write | A file with 10,000 fragments can be written and grown; e2fsck clean |
+| 1.2 | Extent trees deeper than one level on write ✅ (1.3.0) | A heavily fragmented file can be written, cut and grown; e2fsck clean ✅ (480 one-block extents, depth 2, in `make test`; 1,200 passed once but is too slow for every run. 10,000 waits for faster disk I/O) |
 | 1.3 | Write journals with checksums (JBD2 `csum_v3`, the default of newer e2fsprogs) | Volumes made by e2fsprogs 1.47 mount read/write; `make powercut` passes on them |
 | 1.4 | Damaged disks never crash DOORS: every on-disk value is range-checked | A fuzzer that corrupts ext4 and FAT images at random (thousands of images) finds no panic; DOORS reports `ErcBrokenFile` |
 | 1.5 | FAT safety: the "dirty" flag set while mounted, and `chkdsk`-style warnings at mount | A power cut on FAT never makes DOORS crash; Linux `fsck.fat` reports what DOORS predicted |

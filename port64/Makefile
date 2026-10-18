@@ -93,6 +93,7 @@ TEST_ARGS := \
 	--expect "M8: ext4 write ok" \
 	--expect "M8: ext4 stress ok" \
 	--expect "M8b: htree directory writes ok" \
+	--expect "M8b: deep extent trees ok" \
 	--expect "M8: LoadNewJob from ext4 ok" \
 	--expect "DOORS: M8 OK" \
 	--expect "vidtest: all video and keyboard calls ok" \

@@ -121,6 +121,12 @@ def check_disk2(disk2, tmp):
           {htree_name("new", i, "n") for i in range(21, 251)}
     two = {htree_name("two", i, "t") for i in range(1, 601) if i % 6} | \
           {htree_name("add", i, "a") for i in range(1, 201)} | {htree_name("new", i, "n") for i in range(1, 21)}
+    out = debugfs(g, "ex /FRAG2.BIN").decode(errors="replace")
+    depth = max((int(m) for m in re.findall(r"^\s*\d+/\s*(\d+)", out, re.M)), default=-1)
+    leaves = [l for l in out.splitlines() if re.match(r"^\s*(\d+)/\s*\1\s", l)]
+    check("G:\\FRAG2.BIN: a depth-2 extent tree with 480 one-block extents", depth == 2 and len(leaves) == 480,
+          f"depth {depth}, {len(leaves)} extents")
+    check("G:\\FRAG3.BIN deleted", not e4exists(g, "/FRAG3.BIN"))
     check("G:\\ONE has exactly the 380 expected names", names["ONE"] == one, f"{len(names['ONE'])} names")
     check("G:\\TWO has exactly the 720 expected names", names["TWO"] == two, f"{len(names['TWO'])} names")
 

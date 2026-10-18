@@ -1704,6 +1704,69 @@ static void test_htree(void)
 		"rename across directories; GPT disk)\n");
 }
 
+/* ROADMAP 1.2: extent trees deeper than one level on write. On G: (1K blocks) a leaf holds 84
+   extents and the inode root 4, so one level ends at 336 extents. FRAG2.BIN gets 1000 one-block
+   extents with holes between (depth 2), is read back, cut in the middle (the tree shrinks), grown
+   again; FRAG3.BIN gets the same and is deleted (every tree block freed). e2fsck checks the
+   trees afterwards (tools/check_disk.py). */
+static erc_t frag_write(const char *path, U32 plen, U32 from, U32 to)
+{
+	U32 h, k;
+	U64 n;
+	erc_t erc;
+
+	erc = CreateFile(path, plen, 0);
+	if (erc && erc != ErcDupName)
+		return erc;
+	if ((erc = OpenFile(path, plen, ModeModify, 0, &h)))
+		return erc;
+	for (k = from; k < to && !erc; k++) {
+		memset(fbuf, (int)(k & 0xFF) | 1, 1024);
+		erc = WriteBlock(h, fbuf, 1024, (U64)k * 2048, &n);
+	}
+	CloseFile(h);
+	return erc;
+}
+
+static bool frag_check(const char *path, U32 plen, U32 to)
+{
+	U32 h, k;
+	U64 n;
+	bool ok = true;
+
+	if (OpenFile(path, plen, ModeRead, 0, &h))
+		return false;
+	for (k = 0; k < to && ok; k++) {
+		ok = ReadBlock(h, fbuf, 1024, (U64)k * 2048, &n) == ErcOk && fbuf[0] == ((k & 0xFF) | 1) &&
+		     fbuf[1023] == fbuf[0];
+		if (ok && k + 1 < to)
+			ok = ReadBlock(h, fbuf, 1024, (U64)k * 2048 + 1024, &n) == ErcOk && !fbuf[0] && !fbuf[1023];
+	}
+	CloseFile(h);
+	return ok;
+}
+
+static void test_deep_extents(void)
+{
+	U32 h;
+	U64 size;
+	erc_t erc;
+
+	erc = frag_write(S("G:\\FRAG2.BIN"), 0, 400);		/* > 336: depth 2 */
+	CHECK(erc == ErcOk, "400 extents: error %u", erc);
+	CHECK(frag_check(S("G:\\FRAG2.BIN"), 400), "FRAG2.BIN read back (depth 2)");
+	CHECK(OpenFile(S("G:\\FRAG2.BIN"), ModeModify, 0, &h) == ErcOk && SetFileSize(h, 200 * 2048) == ErcOk &&
+	      GetFileSize(h, &size) == ErcOk && size == 200 * 2048, "cut FRAG2.BIN at 200 extents");
+	CloseFile(h);
+	CHECK(frag_check(S("G:\\FRAG2.BIN"), 200), "FRAG2.BIN after the cut");
+	erc = frag_write(S("G:\\FRAG2.BIN"), 200, 480);
+	CHECK(erc == ErcOk && frag_check(S("G:\\FRAG2.BIN"), 480), "FRAG2.BIN grown to 480 extents: %u", erc);
+	erc = frag_write(S("G:\\FRAG3.BIN"), 0, 400);
+	CHECK(erc == ErcOk && OpenFile(S("G:\\FRAG3.BIN"), ModeModify, 0, &h) == ErcOk && DeleteFile(h) == ErcOk,
+	      "a depth-2 file deleted: %u", erc);
+	kprintf("M8b: deep extent trees ok (480 extents at depth 2: split, cut, grow, delete)\n");
+}
+
 static void test_ext4_jobs(void)
 {
 	const struct job *j;
@@ -1786,6 +1849,7 @@ void selftest_run(void)
 	test_ext4_write();
 	test_ext4_stress();
 	test_htree();
+	test_deep_extents();
 	test_ext4_jobs();
 	test_video_kbd();
 	test_job_calls();

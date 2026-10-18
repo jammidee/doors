@@ -223,7 +223,8 @@ Steps:
         present.
 - [x] htree directory writes (1.2.0): one and two index levels, leaf and node splits, root growth;
       uninitialised block groups built on first use. Tested on a GPT disk with Linux-indexed directories.
-- [ ] Deeper extent trees on write (ROADMAP step 1.2).
+- [x] Deeper extent trees on write (1.3.0, ROADMAP step 1.2): any depth up to 4, with leaf and index
+      splits, root growth and truncation that frees emptied nodes. Tested with a 480-extent depth-2 file.
 - [~] Image tool: `tools/mkdisk.py` adds an ext4 partition (F:) built with `mkfs.ext4 -d`. An ext4 *system*
       disk holding the `MMSYS` contents, booted from, comes in M8b/M9.
 - [x] Test suite: M8 self-tests (read, write, a 5 GB sparse file, long and case-different names, rename,
