@@ -12,9 +12,9 @@
      metadata goes through the journal, file data straight to disk first (ordered mode). A
      journal that needs recovery is replayed at mount (also one Linux left). A power cut at any
      point leaves a volume that the next mount (or e2fsck) brings back to a consistent state with
-     every finished operation in it (`make powercut`). Journals with checksum features are
-     replayed but the volume is then mounted read-only; volumes without a journal are written
-     directly, as before.
+     every finished operation in it (`make powercut`). Journals with checksums (csum_v3, which
+     e2fsprogs 1.47 and Linux's mount turn on with metadata_csum, and v2) are checked on replay and
+     written with their checksums; volumes without a journal are written directly, as before.
    - extent trees of any depth up to 4 (see "extents: writing"): leaves and index nodes split,
      the inode root moves down a level when full, and truncation frees nodes it empties.
    - directories with an htree index (Linux makes them for big directories) are written too, with
@@ -94,8 +94,9 @@ struct ext4 {
 	U32 jincompat, jtag;		/* journal incompat features, descriptor tag size */
 	U32 txmax;			/* blocks per transaction */
 	U8 juuid[16];
+	U32 jseed;			/* csum_v2/v3: CRC32C seed, crc32c(~0, journal UUID) */
 	U64 jsb_sec;			/* the journal superblock's first sector ... */
-	U8 jsb0[512];			/* ... and its contents */
+	U8 jsb[1024];			/* ... and the whole superblock (its checksum covers 1024 bytes) */
 };
 
 static struct ext4 exts[MAX_VOLS];
@@ -2230,8 +2231,10 @@ static bool e4_dir_empty(struct fnode *dir)
 #define JI_ASYNC   0x04
 #define JI_CSUM_V2 0x08
 #define JI_CSUM_V3 0x10
-#define JI_OK      (JI_REVOKE | JI_64BIT | JI_ASYNC | JI_CSUM_V2 | JI_CSUM_V3)	/* replay */
-#define JI_WRITE   (JI_REVOKE | JI_64BIT)		/* what DOORS writes itself (no checksums) */
+#define JI_CSUM    (JI_CSUM_V2 | JI_CSUM_V3)
+#define JI_OK      (JI_REVOKE | JI_64BIT | JI_ASYNC | JI_CSUM)	/* replay */
+#define JI_WRITE   (JI_REVOKE | JI_64BIT | JI_CSUM)	/* what DOORS writes itself */
+#define JBD2_CRC32C 4				/* s_checksum_type of csum_v2/v3 journals */
 #define NREVOKE 1024
 
 static U8 b_j[MAXBS], b_jd[MAXBS];		/* journal scratch */
@@ -2276,35 +2279,83 @@ static U32 jnext(struct ext4 *e, U32 lblk)
 	return ++lblk >= e->jlen ? e->jfirst : lblk;
 }
 
-/* the journal superblock with a new s_start and s_sequence (= e->jseq) */
-/* Only its first sector changes (s_sequence 0x18, s_start 0x1C): that sector is kept in memory
-   (journal_mount) and written alone, one atomic sector write. */
-static erc_t jsb_write(struct ext4 *e, U32 start)
+/* JBD2 checksums (csum_v2/v3, CRC32C as Linux's jbd2_chksum):
+     journal superblock  s_checksum (0xFC) = crc32c(~0, the 1024 bytes with s_checksum = 0)
+     descriptor, revoke  the last 4 bytes  = crc32c(seed, the block with them = 0)
+     commit block        h_chksum[0] (16)  = crc32c(seed, the block with it = 0)
+     each logged block   in its tag        = crc32c(crc32c(seed, be32 transaction ID), the block
+                                             as it is in the journal, i.e. escaped); v3 keeps 32
+                                             bits at tag+12, v2 the low 16 at tag+4 */
+static U32 jsb_csum(struct ext4 *e)
 {
-	pbe32(e->jsb0 + 0x18, e->jseq);
-	pbe32(e->jsb0 + 0x1C, start);
-	return bc_write(e->dev, e->jsb_sec, e->jsb0);
+	U32 old = be32(e->jsb + 0xFC), c;
+
+	pbe32(e->jsb + 0xFC, 0);
+	c = crc32c(~0U, e->jsb, 1024);
+	pbe32(e->jsb + 0xFC, old);
+	return c;
 }
 
-/* Tags of a descriptor block: calls fn(home block, flags, ctx) for each; returns their number. */
-static U32 jtags(struct ext4 *e, const U8 *d, void (*fn)(U64, U32, void *), void *ctx)
+/* checksum of a block whose checksum field (at off) counts as zero */
+static U32 jblk_csum(struct ext4 *e, const U8 *b, U32 off)
 {
-	U32 off = 12, n = 0, end = e->bs - ((e->jincompat & (JI_CSUM_V2 | JI_CSUM_V3)) ? 4 : 0);
+	static const U8 zero[4];
+	U32 c = crc32c(e->jseed, b, off);
+
+	c = crc32c(c, zero, 4);
+	return crc32c(c, b + off + 4, e->bs - off - 4);
+}
+
+/* a logged block's tag checksum; escaped: its first 4 bytes are zero in the journal */
+static U32 jdata_csum(struct ext4 *e, U32 seq, const U8 *b, bool escaped)
+{
+	static const U8 zero[4];
+	U8 s[4];
+	U32 c;
+
+	pbe32(s, seq);
+	c = crc32c(e->jseed, s, 4);
+	c = crc32c(c, escaped ? zero : b, 4);
+	return crc32c(c, b + 4, e->bs - 4);
+}
+
+static bool jtag_csum_ok(struct ext4 *e, const U8 *tag, U32 c)
+{
+	if (e->jincompat & JI_CSUM_V3)
+		return be32(tag + 12) == c;
+	return ((U32)tag[4] << 8 | tag[5]) == (c & 0xFFFF);
+}
+
+/* the journal superblock with a new s_start and s_sequence (= e->jseq) */
+/* Only its first sector changes (s_sequence 0x18, s_start 0x1C, s_checksum 0xFC): the superblock
+   is kept in memory (journal_mount) and that sector is written alone, one atomic sector write. */
+static erc_t jsb_write(struct ext4 *e, U32 start)
+{
+	pbe32(e->jsb + 0x18, e->jseq);
+	pbe32(e->jsb + 0x1C, start);
+	if (e->jincompat & JI_CSUM)
+		pbe32(e->jsb + 0xFC, jsb_csum(e));
+	return bc_write(e->dev, e->jsb_sec, e->jsb);
+}
+
+/* Tags of a descriptor block: calls fn(home block, flags, tag, ctx) for each; returns their
+   number. The high half of a block number counts only with JI_64BIT, as on Linux. */
+static U32 jtags(struct ext4 *e, const U8 *d, void (*fn)(U64, U32, const U8 *, void *), void *ctx)
+{
+	U32 off = 12, n = 0, end = e->bs - ((e->jincompat & JI_CSUM) ? 4 : 0);
 
 	while (off + e->jtag <= end) {
 		U64 blk = be32(d + off);
 		U32 flags;
 
-		if (e->jincompat & JI_CSUM_V3) {
+		if (e->jincompat & JI_CSUM_V3)
 			flags = be32(d + off + 4);
-			blk |= (U64)be32(d + off + 8) << 32;
-		} else {
+		else
 			flags = (U32)d[off + 6] << 8 | d[off + 7];
-			if (e->jincompat & JI_64BIT)
-				blk |= (U64)be32(d + off + 8) << 32;
-		}
+		if (e->jincompat & JI_64BIT)
+			blk |= (U64)be32(d + off + 8) << 32;
 		if (fn)
-			fn(blk, flags, ctx);
+			fn(blk, flags, d + off, ctx);
 		n++;
 		off += e->jtag + ((flags & JF_SAME_UUID) ? 0 : 16);
 		if (flags & JF_LAST_TAG)
@@ -2325,19 +2376,27 @@ static bool is_revoked(U64 blk, U32 seq)
 
 struct replay {
 	struct ext4 *e;
+	int pass;
 	U32 lblk, seq, done;		/* next logged block, transaction, blocks written */
 	erc_t erc;
+	bool bad;			/* scan: a logged block's checksum is wrong */
 };
 
-static void replay_tag(U64 blk, U32 flags, void *c)
+/* scan (csum_v2/v3): check each logged block against its tag; replay: write it home */
+static void replay_tag(U64 blk, U32 flags, const U8 *tag, void *c)
 {
 	struct replay *r = c;
 
 	r->lblk = jnext(r->e, r->lblk);
-	if (r->erc || is_revoked(blk, r->seq))
+	if (r->erc || r->bad || (r->pass == 2 && is_revoked(blk, r->seq)))
 		return;
 	if ((r->erc = jread(r->e, r->lblk, b_jd)))
 		return;
+	if (r->pass == 0) {
+		if (!jtag_csum_ok(r->e, tag, jdata_csum(r->e, r->seq, b_jd, false)))
+			r->bad = true;
+		return;
+	}
 	if (flags & JF_ESCAPE)
 		pbe32(b_jd, JBD2_MAGIC);
 	if (!(r->erc = bwr(r->e, blk, b_jd)))
@@ -2345,10 +2404,14 @@ static void replay_tag(U64 blk, U32 flags, void *c)
 }
 
 /* One pass over the log from s_start (pass 0 scan, 1 revoke, 2 replay); *end = first ID not
-   committed (set by the scan pass). */
+   committed (set by the scan pass). With checksums, the scan ends the log at the first block whose
+   checksum is wrong: that transaction and the ones after it are not replayed. Linux treats a bad
+   commit block the same way; DOORS writes a commit block only after the blocks it covers, so a
+   bad checksum never comes from a DOORS crash. */
 static erc_t jpass(struct ext4 *e, U32 start, int pass, U32 *end, U32 *done)
 {
 	U32 lblk = start, seq = e->jseq, guard;
+	bool csum = pass == 0 && (e->jincompat & JI_CSUM);
 	erc_t erc;
 
 	for (guard = 0; guard < e->jlen; guard++) {
@@ -2361,13 +2424,25 @@ static erc_t jpass(struct ext4 *e, U32 start, int pass, U32 *end, U32 *done)
 		if (be32(b_j) != JBD2_MAGIC || be32(b_j + 8) != seq)
 			break;				/* end of the log */
 		type = be32(b_j + 4);
+		if (csum && ((type == JBD2_COMMIT && be32(b_j + 16) != jblk_csum(e, b_j, 16)) ||
+			     ((type == JBD2_DESCRIPTOR || type == JBD2_REVOKE) &&
+			      be32(b_j + e->bs - 4) != jblk_csum(e, b_j, e->bs - 4)))) {
+			kprintf("ext4 on %c: journal block %u (transaction %u) has a bad checksum: the log ends there\n",
+				e->vol->letter, lblk, seq);
+			break;
+		}
 		if (type == JBD2_DESCRIPTOR) {
-			if (pass == 2) {
-				struct replay r = { e, lblk, seq, 0, ErcOk };
+			if (pass == 2 || csum) {
+				struct replay r = { e, pass, lblk, seq, 0, ErcOk, false };
 
 				jtags(e, b_j, replay_tag, &r);	/* the logged blocks are read into b_jd */
 				if (r.erc)
 					return r.erc;
+				if (r.bad) {
+					kprintf("ext4 on %c: a block logged in transaction %u has a bad checksum: "
+						"the log ends there\n", e->vol->letter, seq);
+					break;
+				}
 				*done += r.done;
 				lblk = r.lblk;
 			} else {
@@ -2426,7 +2501,7 @@ static erc_t journal_mount(struct ext4 *e, bool *ro)
 	start = be32(b_j + 0x1C);
 	e->jincompat = type == JBD2_SB_V2 ? be32(b_j + 0x28) : 0;
 	memcpy(e->juuid, b_j + 0x30, 16);
-	memcpy(e->jsb0, b_j, 512);
+	memcpy(e->jsb, b_j, 1024);
 	{
 		U64 p;
 
@@ -2437,6 +2512,17 @@ static erc_t journal_mount(struct ext4 *e, bool *ro)
 	if (e->jincompat & ~JI_OK) {
 		kprintf("ext4 on %c: journal features %x not supported\n", e->vol->letter, e->jincompat);
 		return ErcNotSupported;
+	}
+	if (e->jincompat & JI_CSUM) {
+		if (e->jsb[0x50] != JBD2_CRC32C) {
+			kprintf("ext4 on %c: journal checksum type %u not supported\n", e->vol->letter, e->jsb[0x50]);
+			return ErcNotSupported;
+		}
+		if (be32(e->jsb + 0xFC) != jsb_csum(e)) {
+			kprintf("ext4 on %c: journal superblock checksum mismatch\n", e->vol->letter);
+			return ErcBrokenFile;
+		}
+		e->jseed = crc32c(~0U, e->juuid, 16);
 	}
 	e->jtag = (e->jincompat & JI_CSUM_V3) ? 16 :
 		  8 + ((e->jincompat & JI_CSUM_V2) ? 2 : 0) + ((e->jincompat & JI_64BIT) ? 4 : 0);
@@ -2531,7 +2617,7 @@ static erc_t tx_commit(void)
 		return ErcOk;
 	/* 1. descriptor(s) + blocks, then the commit block (needs_recovery has been set since mount) */
 	while (i < tx.n) {
-		U32 first = i, off = 12, last = 0;
+		U32 first = i, off = 12, last = 0, end = e->bs - ((e->jincompat & JI_CSUM) ? 4 : 0);
 
 		memset(b_jd, 0, e->bs);
 		pbe32(b_jd, JBD2_MAGIC);
@@ -2539,16 +2625,27 @@ static erc_t tx_commit(void)
 		pbe32(b_jd + 8, e->jseq);
 		for (; i < tx.n; i++) {
 			U32 need = e->jtag + (i == first ? 16 : 0), flags = i == first ? 0 : JF_SAME_UUID;
+			const U8 *img = tx.img + (U64)i * MAXBS;
 
-			if (off + need > e->bs)
+			if (off + need > end)
 				break;
-			if (be32(tx.img + (U64)i * MAXBS) == JBD2_MAGIC)
+			if (be32(img) == JBD2_MAGIC)
 				flags |= JF_ESCAPE;
 			pbe32(b_jd + off, (U32)tx.blk[i]);
-			b_jd[off + 6] = (U8)(flags >> 8);
+			b_jd[off + 6] = (U8)(flags >> 8);	/* v3: the low half of a be32 at +4 */
 			b_jd[off + 7] = (U8)flags;
 			if (e->jincompat & JI_64BIT)
 				pbe32(b_jd + off + 8, (U32)(tx.blk[i] >> 32));
+			if (e->jincompat & JI_CSUM) {
+				U32 c = jdata_csum(e, e->jseq, img, flags & JF_ESCAPE);
+
+				if (e->jincompat & JI_CSUM_V3) {
+					pbe32(b_jd + off + 12, c);
+				} else {
+					b_jd[off + 4] = (U8)(c >> 8);
+					b_jd[off + 5] = (U8)c;
+				}
+			}
 			last = off;
 			off += e->jtag;
 			if (i == first) {
@@ -2557,6 +2654,8 @@ static erc_t tx_commit(void)
 			}
 		}
 		b_jd[last + 7] |= JF_LAST_TAG;
+		if (e->jincompat & JI_CSUM)
+			pbe32(b_jd + e->bs - 4, jblk_csum(e, b_jd, e->bs - 4));
 		if ((erc = jwrite(e, lblk, b_jd)))
 			return erc;
 		lblk = jnext(e, lblk);
@@ -2578,6 +2677,8 @@ static erc_t tx_commit(void)
 	pbe32(b_jd + 4, JBD2_COMMIT);
 	pbe32(b_jd + 8, e->jseq);
 	pbe32(b_jd + 0x34, unix_time());		/* h_commit_sec (low 32 bits of a be64) */
+	if (e->jincompat & JI_CSUM)			/* h_chksum_type and _size stay 0 */
+		pbe32(b_jd + 16, jblk_csum(e, b_jd, 16));
 	if ((erc = jwrite(e, lblk, b_jd)))
 		return erc;
 	/* 2. committed: a crash from here on is repaired by the replay */

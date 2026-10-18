@@ -30,7 +30,7 @@ is a failure. The serial log is kept in `build/serial.log`.
 | M8 | `ext4 read ok`, `ext4 write ok`, `ext4 stress ok (seed ...)`, loading from ext4 | ext4 |
 | M9 | `vidtest: all video and keyboard calls ok`, `M9: video and keyboard ok` | virtual screens, `ReadKbd` with keys typed by the runner (`{f1}`, `{up}`, `{backspace}`), `EditLine`, Ctrl-Alt-PgDn/Del |
 | M9 | `jobtest: job calls, Chain, exit job and C library ok`, `M9: job calls ok` | JCB strings, CMOS clock, the C library, `Chain` and the exit run file (three programs in one job) |
-| M8b | `ext4 on F: journal replayed: 1 transactions, 1 blocks`, `M8b: htree directory writes ok`, `M8b: deep extent trees ok` | replay of a Linux journal transaction left on the test disk; on the second test disk (GPT, G:, ext4 with 1K blocks): 450 creates, 100 deletes and 20 moves in Linux-indexed directories, with leaf and node splits and a root growing to two levels; a file written as 400 one-block fragments, cut to 200 and grown to 480 (a depth-2 extent tree), and a second one deleted. `check_disk.py` runs `e2fsck -fn` on G:, compares every name and checks FRAG2.BIN's tree |
+| M8b | `ext4 on F: a block logged in transaction 2 has a bad checksum: the log ends there`, `ext4 on F: journal replayed: 1 transactions, 1 blocks`, `M8b: htree directory writes ok`, `M8b: deep extent trees ok` | F: has a csum_v3 journal holding two Linux transactions (`debugfs jo -c`): the first is replayed, the second's logged block was damaged by mkdisk and must not be (`check_disk.py` checks that CSUMBAD.TXT is unchanged); on the second test disk (GPT, G:, ext4 with 1K blocks): 450 creates, 100 deletes and 20 moves in Linux-indexed directories, with leaf and node splits and a root growing to two levels; a file written as 400 one-block fragments, cut to 200 and grown to 480 (a depth-2 extent tree), and a second one deleted. `check_disk.py` runs `e2fsck -fn` on G:, compares every name and checks FRAG2.BIN's tree |
 | M9 | `hello: command line 'hello'`, `M9: CLI ok` | the CLI from `C:\DOORS\CLI.ELF` with typed commands: `md`, `copy`, an external command found in `C:\DOORS\` and run with `Chain`, `edit` (create a file with a long name, type, Alt-S, Alt-Q), `dir`, `exit`; `check_disk.py` checks both files |
 | M9 | `NUMBERS Service gave out number: 1.`, `M9: samples ok` | the NUMBERS service (waits for a key through the KEYBOARD service) with two `testsvc` clients; BusyLoop killed with Ctrl-Alt-Del; no pages leaked |
 
@@ -76,7 +76,9 @@ and boots DOORS with the kernel command line `powercut`. DOORS then writes, rewr
 and deletes files in `F:\PC` forever, printing `PC: op N done` after each operation
 (`kernel/powercut.c`). The script kills QEMU (SIGKILL) at a random point. Run 0 boots
 `powercut stop=60` instead, which halts inside the 60th journal commit, after the transaction is in
-the journal and before its blocks are in place, so a replay is certain. After each cut:
+the journal and before its blocks are in place, so a replay is certain. Even runs give F: a
+csum_v3 journal and odd runs a plain one (`mkdisk.py --plain-journal`), so Linux's replay checks
+every checksum DOORS wrote. After each cut:
 
 1. **Linux** replays the journal on a copy (`e2fsck -fy`). `e2fsck -fn` must then be clean, and
    `debugfs` must show every file exactly as the operation model says after the last `done`

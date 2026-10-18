@@ -88,6 +88,7 @@ TEST_ARGS := \
 	--expect "fsuser: all file calls from ring 3 ok" \
 	--expect "M7: file calls from ring 3 ok" \
 	--expect "DOORS: M7 OK" \
+	--expect "ext4 on F: a block logged in transaction 2 has a bad checksum: the log ends there" \
 	--expect "ext4 on F: journal replayed: 1 transactions, 1 blocks" \
 	--expect "M8: ext4 read ok" \
 	--expect "M8: ext4 write ok" \

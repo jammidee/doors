@@ -171,15 +171,18 @@ ext4 volumes made by `mkfs.ext4` have a journal (JBD2), and DOORS uses it as Lin
 - **While DOORS runs, the volume is marked "in use"** (`needs_recovery`), as Linux does. The
   monitor's `sync` command marks it clean. Without `sync`, Linux or the next DOORS mount just finds
   an empty journal and clears the mark. Nothing is lost either way.
-- Journals that use checksums (JBD2 `csum_v2`/`csum_v3`, made by newer e2fsprogs) are replayed,
-  but DOORS doesn't write them: the volume is mounted read-only. An external journal also means
-  read-only.
+- **Journals with checksums** (JBD2 `csum_v3`, which e2fsprogs 1.47 makes and Linux turns on when it
+  mounts a `metadata_csum` volume, and the older `csum_v2`) are read and written normally. DOORS
+  writes every CRC32C checksum (journal superblock, descriptor, commit and each logged block) and
+  checks them on replay. A transaction with a wrong checksum ends the log: it and the ones after it
+  are not replayed, and the boot log says `... has a bad checksum: the log ends there`.
+- An external journal means read-only.
 
 ### ext4 limits
 
 | Situation | Result |
 |---|---|
-| Unknown read-only features, old block-mapped (ext2/3-style) volumes, a journal with checksum features or an external journal | mounted read-only |
+| Unknown read-only features, old block-mapped (ext2/3-style) volumes, an external journal, a journal with `async_commit` or a checksum type other than CRC32C | mounted read-only |
 | Unknown incompatible features (encryption, inline data, ...) | not mounted |
 | A directory with a 3-level htree index (`largedir`, millions of files) | writing gives `ErcDirFull`; reading works. Indexes with 1 or 2 levels, which Linux makes for big directories, are written normally |
 | Writing a file whose extent tree is 5 levels deep (the ext4 maximum; with 4 KB blocks, 4 levels already hold over 50 billion extents) | `ErcBrokenFile`. Reading works at any depth. Trees up to depth 4 grow, split and shrink normally |

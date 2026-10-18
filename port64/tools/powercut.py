@@ -10,6 +10,7 @@ the journal but not yet in place, so a replay is needed. Then:
      must be clean, and the files must be as the operation model says;
   B. DOORS: boot "pccheck" on the disk: the mount replays the journal, every file in F:\\PC must
      read back. Then e2fsck -fn must be clean without any repair, and the model must hold.
+Even runs give F: a csum_v3 journal (so Linux checks every checksum DOORS wrote), odd runs a plain one.
 "Every operation that printed `done` is there": all slots match the model after the last done op N;
 the slots touched by op N+1 (in progress at the cut) may hold either state.
 
@@ -142,10 +143,12 @@ def last_done(log):
 # ---- a run ----
 
 def run(n, stop):
+    jkind = "plain journal" if n % 2 else "csum_v3 journal"     # odd runs: no journal checksums
     subprocess.run([sys.executable, os.path.join(HERE, "mkdisk.py"), DISK,
                     "--hello", os.path.join(PORT, "build", "user", "hello.elf"),
                     "--progs", os.path.join(PORT, "build", "user"),
-                    "--sys", os.path.join(PORT, "user", "sys")], check=True, stdout=subprocess.DEVNULL)
+                    "--sys", os.path.join(PORT, "user", "sys")] + (["--plain-journal"] if n % 2 else []),
+                   check=True, stdout=subprocess.DEVNULL)
     if stop:
         log, _ = boot(os.path.join(PORT, "build", "doors-pcstop.iso"),
                       lambda l: "PC: stopped inside commit" in l, 120)
@@ -186,7 +189,7 @@ def run(n, stop):
         err = check_model(b, nops)
         if err:
             return "B (DOORS replay): " + err
-    print(f"PASS  run {n}: {how}, {nops} ops done, "
+    print(f"PASS  run {n} ({jkind}): {how}, {nops} ops done, "
           f"DOORS replayed {replayed.group(1) if replayed else 0} transaction(s); Linux and DOORS clean",
           flush=True)
     return None

@@ -189,7 +189,7 @@ make debug    # QEMU waits for gdb on :1234
   `MSAMPLES/CLI/CLI.C` (the original stays untouched; its header lists every change). File names without a
   drive are relative to the job's path (`build_spec` in `kernel/fsys.c`).
 - Disks and files: `make test` builds `build/disk-test.img` (tools/mkdisk.py: MBR + FAT32 C:, FAT16 D:,
-  FAT12 E:, ext4 F:) and `build/disk2-test.img` (`--disk2`: GPT, 1K-block ext4 G: with htree directories made
+  FAT12 E:, ext4 F: with a csum_v3 journal; `--plain-journal` for none) and `build/disk2-test.img` (`--disk2`: GPT, 1K-block ext4 G: with htree directories made
   by `e2fsck -D`), and afterwards `tools/check_disk.py` verifies both with `fsck.fat`/mtools and
   `e2fsck -fn`/`debugfs`. Note: `debugfs ls -p` also lists unused entries (inode 0); skip them. `make run` uses
   `build/disk.img` (kept between runs; delete it for a fresh one).

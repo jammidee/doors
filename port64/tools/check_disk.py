@@ -82,6 +82,11 @@ def check_ext4(f4):
           "needs_recovery" not in h, seq.group(0) if seq else "no journal")
     check("F:\\JOURNAL.TXT = the replayed block (Linux transaction left by mkdisk)",
           e4cat(f4, "/JOURNAL.TXT") == b"after replay!\n")
+    check("F:\\CSUMBAD.TXT unchanged (its transaction's checksum is bad: not replayed)",
+          e4cat(f4, "/CSUMBAD.TXT") == b"not replayed\n")
+    check("F: journal has csum_v3 and a valid superblock checksum (DOORS rewrote it)",
+          re.search(r"Journal features:.*journal_checksum_v3", h) and
+          re.search(r"Journal checksum type:\s+crc32c", h), "no csum_v3")
     check("F:\\NEW4.BIN = 100000 bytes of pattern 13", e4cat(f4, "/NEW4.BIN") == pat(100000, 13))
     frag = b"".join(bytes([ord("a") + i]) * 4096 + (bytes(4096) if i < 11 else b"") for i in range(12))
     check("F:\\FRAG.BIN = 12 blocks with holes (extent tree)", e4cat(f4, "/FRAG.BIN") == frag)

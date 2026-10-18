@@ -215,8 +215,13 @@ Steps:
         descriptor + blocks + commit block in the journal → journal superblock `s_start` set → blocks to
         their homes (the superblock too) → `s_start` = 0. The first design wrote the superblock directly
         around each commit; the power-cut test tore it (two sectors, one checksum), hence the change.
-        Journals with features DOORS doesn't write (checksums v2/v3) are replayed, then the volume is
-        mounted read-only.
+        Journals with features DOORS doesn't write (checksums v2/v3, until 1.4.0) are replayed, then
+        the volume is mounted read-only.
+  - [x] **Checksummed journals (1.4.0, ROADMAP step 1.3):** csum_v3 (and v2) journals are written with
+        every CRC32C (journal superblock, descriptor and commit tails, each tag) and checked in the scan
+        pass, where a bad one ends the log. F: on the test disk gets a csum_v3 journal from `debugfs jo -c`
+        with a second, damaged transaction that must not be replayed; `make powercut` alternates csum_v3
+        and plain journals, so Linux's e2fsck checks every checksum DOORS wrote.
   - [x] **Power-cut test (1.1.0):** `tools/powercut.py` kills QEMU in the middle of journaled writes
         (also at a fixed point inside a commit); Linux's `e2fsck -fy` must replay DOORS's journal, and
         DOORS's own replay on the next boot must leave `e2fsck -fn` clean with every completed operation

@@ -63,7 +63,7 @@ Finished and covered by automatic tests:
 Not yet available (see [chapter 11](11-limits.md)):
 
 - Booting from an ext4 system disk (M8b). The ext4 journal (1.1.0), htree directory writes
-  (1.2.0) and deep extent trees on write (1.3.0) are done.
+  (1.2.0), deep extent trees on write (1.3.0) and journals with checksums (1.4.0) are done.
 - The debugger and the other calls that still return `ErcBadCallGate`.
 
 Done in M9: per-job screens and the keyboard service (0.9.0), the job calls (`Chain`, exit run

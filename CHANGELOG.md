@@ -12,6 +12,20 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.4.0 — 2026-10-18 — M8b: journals with checksums
+- **ext4 volumes whose journal has checksums are written** (JBD2 `csum_v3`, which e2fsprogs 1.47
+  makes and Linux turns on when it mounts a `metadata_csum` volume, and the older `csum_v2`). Before,
+  they were replayed and then mounted read-only.
+  - DOORS writes every CRC32C: the journal superblock's, each descriptor's and commit block's, and
+    one per logged block in its tag.
+  - The replay checks them all. A block with a wrong checksum ends the log there, so that
+    transaction and later ones are not replayed. The journal superblock's checksum is checked at mount.
+  - A block number's high half in a csum_v3 tag counts only with `64bit`, as on Linux.
+- **Tests:** F: on the test disk now has a csum_v3 journal (`debugfs jo -c`) holding two Linux
+  transactions; the second has a damaged block and must not be replayed. `make powercut`
+  alternates csum_v3 and plain journals (`mkdisk.py --plain-journal`), so e2fsck checks every
+  checksum DOORS wrote.
+
 ## 1.3.0 — 2026-10-18 — M8b: deep extent trees on write
 - **Extent trees of any depth up to 4** are written: leaf and index node splits, the inode root
   moving down a level when it is full, and truncation at any depth that frees the nodes it empties.

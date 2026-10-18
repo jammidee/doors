@@ -4,6 +4,10 @@
 mkfs.fat and mtools, so the kernel's FAT code is checked against an independent implementation.
 
   python3 tools/mkdisk.py OUT.img [--hello build/user/hello.elf] [--progs build/user] [--sys user/sys]
+                          [--plain-journal] [--disk2 OUT2.img]
+
+F:'s journal has CRC32C checksums (csum_v3), as e2fsprogs 1.47 makes it and Linux's mount sets it
+on metadata_csum volumes; --plain-journal leaves it without checksums (as e2fsprogs 1.46 makes it).
 
 Layout (512-byte sectors):  2048.. FAT32 40 MB | FAT16 16 MB | FAT12 4 MB | ext4 64 MB | free (scratch)
 Files:
@@ -38,6 +42,8 @@ EXT_DEEP = b"Deep in an ext4 tree.\n"
 EXT_CASE = b"case matters\n"
 EXT_JOURNAL_OLD = b"before replay\n"    # F:\JOURNAL.TXT as mkfs writes it ...
 EXT_JOURNAL_NEW = b"after replay!\n"    # ... and as the pending journal transaction rewrites it
+EXT_CSUMBAD_OLD = b"not replayed\n"     # F:\CSUMBAD.TXT: a second transaction rewrites it, but its
+EXT_CSUMBAD_NEW = b"BAD REPLAY!!\n"     # logged block is damaged, so its checksum fails (csum_v3)
 TINY_TXT = b"FAT12 volume E:\n"
 
 
@@ -129,6 +135,12 @@ def make_disk2(out, tmp):
     gpt_disk(out, img)
 
 
+def e4bmap(img, args):
+    """debugfs bmap: the physical block of "FILE LBLK" (FILE may be <INODE>)."""
+    return subprocess.run(["debugfs", "-R", "bmap " + args, img], check=True, stdout=subprocess.PIPE,
+                          stderr=subprocess.DEVNULL).stdout.decode().strip()
+
+
 def opt(name):
     return sys.argv[sys.argv.index(name) + 1] if name in sys.argv else None
 
@@ -181,7 +193,7 @@ def main():
             os.makedirs(os.path.join(tree, sub))
         files = {"HELLO.TXT": EXT_HELLO, "A long file name on ext4.txt": EXT_LONG,
                  "deep/dir/tree/FILE.TXT": EXT_DEEP, "MixedCase.Txt": EXT_CASE,
-                 "JOURNAL.TXT": EXT_JOURNAL_OLD,
+                 "JOURNAL.TXT": EXT_JOURNAL_OLD, "CSUMBAD.TXT": EXT_CSUMBAD_OLD,
                  "BIG.BIN": big_bin(300000)}
         if hello:
             files["BIN/HELLO.ELF"] = open(hello, "rb").read()
@@ -196,15 +208,25 @@ def main():
             "-d", tree, f4, str(PARTS[3][1] // 8))
         # A transaction in the journal that Linux committed but never replayed (as after a crash):
         # it rewrites JOURNAL.TXT's block, and leaves needs_recovery set. DOORS must replay it.
-        blk = subprocess.run(["debugfs", "-R", "bmap /JOURNAL.TXT 0", f4], check=True,
-                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL).stdout.decode().strip()
-        newblk = os.path.join(tmp, "newblk")
-        with open(newblk, "wb") as nb:
-            nb.write(EXT_JOURNAL_NEW.ljust(4096, b"\0"))
+        # With checksums (jo -c: csum_v3), a second transaction rewrites CSUMBAD.TXT, and its logged
+        # block (journal block 5: descriptor 4, data 5, commit 6) is then damaged: the replay must
+        # end the log there and leave CSUMBAD.TXT as it was.
+        csum = "--plain-journal" not in sys.argv
         cmds = os.path.join(tmp, "jcmds")
         with open(cmds, "w") as cf:
-            cf.write(f"jo\njw -b {blk} {newblk}\njc\n")
+            cf.write("jo -c\n" if csum else "jo\n")
+            for path, data in (("/JOURNAL.TXT", EXT_JOURNAL_NEW),
+                               ("/CSUMBAD.TXT", EXT_CSUMBAD_NEW))[:2 if csum else 1]:
+                newblk = os.path.join(tmp, "newblk" + path[1:])
+                with open(newblk, "wb") as nb:
+                    nb.write(data.ljust(4096, b"\0"))
+                cf.write(f"jw -b {e4bmap(f4, path + ' 0')} {newblk}\n")
+            cf.write("jc\n")
         run("debugfs", "-w", "-f", cmds, f4, stderr=subprocess.DEVNULL)
+        if csum:
+            with open(f4, "r+b") as img:
+                img.seek(int(e4bmap(f4, "<8> 5")) * 4096 + 100)
+                img.write(b"X")
 
         mbr = bytearray(SEC)
         for i, (start, n, typ, bits, label) in enumerate(PARTS):
