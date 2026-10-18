@@ -126,7 +126,13 @@ static struct {
 	U64 blk[TXMAX];
 	U8 dirty[TXMAX];		/* changed 512-byte sectors of each block (bit per sector) */
 	U8 *img;			/* TXMAX * MAXBS bytes (AllocOSPage, first journaled mount) */
+	U8 sb_save[1024];		/* e->sb when the transaction began (or last committed) */
+	bool clean_stop;		/* the operation stopped at a consistent point (a full disk) */
 } tx;
+
+/* Data blocks are only given out while more than this many stay free, so the metadata of the same
+   operation (extent tree splits: at most one block per level, a new root) always finds room. */
+#define DATA_RESERVE 8
 
 static erc_t tx_commit(void);
 
@@ -1295,6 +1301,19 @@ static erc_t ext_truncate(struct ext4 *e, U32 ino, U8 *raw, U32 keep)
 
 /* ---- file data: writing ---- */
 
+static U64 sb_free_blocks(struct ext4 *e)
+{
+	return le32(e->sb + 0x0C) | ((e->incompat & INCOMPAT_64BIT) ? (U64)le32(e->sb + 0x158) << 32 : 0);
+}
+
+/* A write that runs out of data blocks stops between blocks, with everything so far consistent:
+   ErcDiskFull, and the transaction is committed (tx_end_rb), not rolled back. */
+static erc_t full_stop(void)
+{
+	tx.clean_stop = true;
+	return ErcDiskFull;
+}
+
 static erc_t write_blocks(struct ext4 *e, U32 ino, U8 *raw, U64 off, const U8 *buf, U64 len, U64 *done)
 {
 	U64 fresh_lo = 1, fresh_hi = 0;		/* logical blocks allocated by this call */
@@ -1317,10 +1336,15 @@ static erc_t write_blocks(struct ext4 *e, U32 ino, U8 *raw, U64 off, const U8 *b
 				want = run;
 			if (want > 32768)
 				want = 32768;
+			if (sb_free_blocks(e) <= DATA_RESERVE + want) {	/* keep room for the metadata */
+				if (sb_free_blocks(e) <= DATA_RESERVE)
+					return full_stop();
+				want = (U32)(sb_free_blocks(e) - DATA_RESERVE);
+			}
 			if (lblk && ext_map(e, raw, lblk - 1, &prev, &r2) == ErcOk && prev)
 				goal = prev + 1;
 			if ((erc = balloc(e, goal, want, &start, &got)))
-				return erc;
+				return erc == ErcDiskFull ? full_stop() : erc;	/* balloc changed nothing */
 			if ((erc = ext_add(e, ino, raw, lblk, start, got)))
 				return erc;
 			add_blocks(e, raw, got);
@@ -2745,6 +2769,7 @@ static erc_t tx_commit(void)
 	if ((erc = jsb_write(e, 0)))
 		return erc;
 	tx.n = 0;
+	memcpy(tx.sb_save, e->sb, sizeof(tx.sb_save));	/* a rollback goes back to here now */
 	return ErcOk;
 }
 
@@ -2760,19 +2785,42 @@ static void tx_begin(struct ext4 *e)
 		}
 		tx.e = e;
 		tx.n = 0;
+		tx.clean_stop = false;
+		memcpy(tx.sb_save, e->sb, sizeof(tx.sb_save));
 	}
+}
+
+/* Commit the operation's transaction. An operation that failed half-way (no room for an extent
+   split, a damaged block, ...) is rolled back instead: its metadata changes are only in the
+   transaction, so dropping it and the in-memory superblock's changes leaves the volume as it
+   was. (File data already written in place stays, as in ordered mode on Linux.) A full disk
+   that stopped a write cleanly (tx.clean_stop) is committed: what was written is consistent.
+   *rolled_back tells the caller to forget its own changes (sizes, counts). */
+static erc_t tx_end_rb(struct ext4 *e, erc_t erc, bool *rolled_back)
+{
+	erc_t c;
+
+	*rolled_back = false;
+	if (!e || tx.e != e)
+		return erc;
+	if (erc && !tx.clean_stop) {
+		tx.n = 0;
+		memcpy(e->sb, tx.sb_save, sizeof(tx.sb_save));
+		*rolled_back = true;
+		c = ErcOk;
+	} else {
+		c = tx_commit();
+	}
+	tx.e = NULL;
+	tx.n = 0;
+	return erc ? erc : c;
 }
 
 static erc_t tx_end(struct ext4 *e, erc_t erc)
 {
-	erc_t c;
+	bool rb;
 
-	if (!e || tx.e != e)
-		return erc;
-	c = tx_commit();
-	tx.e = NULL;
-	tx.n = 0;
-	return erc ? erc : c;
+	return tx_end_rb(e, erc, &rb);
 }
 
 /* The modifying operations, one transaction each. */
@@ -2803,17 +2851,53 @@ static erc_t j_rename(struct fnode *n, const char *newpath, U32 len)
 static erc_t j_write(struct fnode *n, U64 off, const U8 *buf, U64 len, U64 *done)
 {
 	struct ext4 *e = n->vol->ext4;
+	U64 size = n->size;
+	bool rb;
+	erc_t erc;
 
 	tx_begin(e);
-	return tx_end(e, e4_write(n, off, buf, len, done));
+	erc = tx_end_rb(e, e4_write(n, off, buf, len, done), &rb);
+	if (rb) {				/* nothing of it is on the volume */
+		*done = 0;
+		n->size = size;
+	}
+	return erc;
 }
 
 static erc_t j_truncate(struct fnode *n, U64 size)
 {
 	struct ext4 *e = n->vol->ext4;
+	U64 old = n->size;
+	bool rb;
+	erc_t erc;
 
 	tx_begin(e);
-	return tx_end(e, e4_truncate(n, size));
+	erc = tx_end_rb(e, e4_truncate(n, size), &rb);
+	if (rb)
+		n->size = old;
+	return erc;
+}
+
+/* Free blocks and inodes, added up from the group descriptors (the superblock's totals are only
+   updated lazily by Linux, so they may be stale on a volume Linux wrote last). */
+static erc_t e4_space(struct volume *v, struct vol_space *out)
+{
+	struct ext4 *e = v->ext4;
+	struct gd d;
+	U32 g;
+	erc_t erc;
+
+	memset(out, 0, sizeof(*out));
+	out->unit = e->bs;
+	out->total = e->nblocks;
+	out->inodes = e->ninodes;
+	for (g = 0; g < e->ngroups; g++) {
+		if ((erc = gd_get(e, g, &d)))
+			return erc;
+		out->free += GD_FREE_BLOCKS(e, &d);
+		out->inodes_free += GD_FREE_INODES(e, &d);
+	}
+	return ErcOk;
 }
 
 const struct fs_ops ext4_ops = {
@@ -2828,6 +2912,7 @@ const struct fs_ops ext4_ops = {
 	.readdir = e4_readdir,
 	.dir_empty = e4_dir_empty,
 	.dir_sector = NULL,
+	.space = e4_space,
 };
 
 /* ---- mount ---- */
@@ -2921,6 +3006,17 @@ erc_t ext4_mount(struct volume *v)
 	v->ops = &ext4_ops;
 	v->ro = ro;
 	v->kind = VOL_EXT4;
+	{	/* the superblock's free counts, exact (Linux keeps them only lazily): the data reserve and
+		   df use them. Only in memory; the next transaction writes them. */
+		struct vol_space sp;
+
+		if (e4_space(v, &sp) == ErcOk) {
+			put32(sb + 0x0C, (U32)sp.free);
+			if (e->incompat & INCOMPAT_64BIT)
+				put32(sb + 0x158, (U32)(sp.free >> 32));
+			put32(sb + 0x10, (U32)sp.inodes_free);
+		}
+	}
 	if (ro)
 		kprintf("ext4 on %c: mounted read-only (features %x/%x%s)\n", v->letter, e->incompat,
 			e->ro_compat, (e->incompat & INCOMPAT_RECOVER) ? ", journal needs recovery" : "");

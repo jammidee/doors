@@ -12,6 +12,7 @@
 #                   with sanitizers (tests/fsfuzz); FUZZ_N damaged images per disk and build
 #   make test       boot headless (tools/qemu_test.py); pass if the serial log shows every
 #                   TEST_MARKS string and the kernel exits QEMU through isa-debug-exit
+#   make fulltest   make test plus every volume filled to 100 % and freed (ROADMAP 1.7); ~5 min
 #   make debug      like run, but QEMU waits for gdb on :1234 (gdb build/kernel.elf -ex 'target remote :1234')
 #   make clean
 #
@@ -113,6 +114,7 @@ TEST_ARGS := \
 	--expect "M9: CLI ok" \
 	--expect "NUMBERS Service gave out number: 1." \
 	--expect "M9: samples ok" \
+	--expect "1.7: edge cases ok" \
 	--send "M2: type doors=doors\n" \
 	--send "M5: type msg=msg\n" \
 	--send "M9: type kbd=kQ{f1}{up}\n" \
@@ -124,7 +126,7 @@ TEST_ARGS := \
 	--send "M9: type ed3=Edited in DOORS{alt-s}{alt-q}" \
 	--send "M9: type cli3=dir C:\T9\nexit\n"
 
-.PHONY: all run run-ext4 console test smoke powercut fuzz debug clean FORCE
+.PHONY: all run run-ext4 console test fulltest smoke powercut fuzz debug clean FORCE
 # Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
 .SECONDARY:
 
@@ -202,6 +204,9 @@ $(ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 
 $(TEST_ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 	$(call mkiso,$@,test)
+FULLTEST_ISO := $(BUILD)/doors-fulltest.iso
+$(FULLTEST_ISO): $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
+	$(call mkiso,$@,test full)
 
 # Power-cut test (tools/powercut.py): a writer, a writer that stops inside a journal commit, a checker;
 # and a writer and checker on FAT (C:)
@@ -251,10 +256,20 @@ console: $(ISO) $(DISK)
 debug: $(ISO) $(DISK)
 	$(QEMU) $(QEMU_BASE) -name DOORS -cdrom $(ISO) $(call QEMU_DISK,$(DISK)) -serial stdio -s -S $(QEMU_EXTRA)
 
+# QEMU_TEST: the QEMU `make test` runs, e.g. a script that adds -s to debug a hung test with gdb
+QEMU_TEST ?= qemu-system-x86_64
 test: $(TEST_ISO) $(USER_ELFS)
 	python3 tools/mkdisk.py $(TEST_DISK) $(MKDISK_ARGS) --damage --disk2 $(TEST_DISK2)
-	python3 tools/qemu_test.py --iso $(TEST_ISO) --disk $(TEST_DISK) --disk2 $(TEST_DISK2) \
+	python3 tools/qemu_test.py --qemu $(QEMU_TEST) --iso $(TEST_ISO) --disk $(TEST_DISK) --disk2 $(TEST_DISK2) \
 		--log $(BUILD)/serial.log --timeout $(TEST_TIMEOUT) $(TEST_ARGS)
+	python3 tools/check_disk.py $(TEST_DISK) $(TEST_DISK2) --log $(BUILD)/serial.log
+
+# make test plus every volume filled to 100 % and freed again (ROADMAP 1.7), then the same disk
+# checks; ~5 minutes, most of it ATA PIO
+fulltest: $(FULLTEST_ISO) $(USER_ELFS)
+	python3 tools/mkdisk.py $(TEST_DISK) $(MKDISK_ARGS) --damage --disk2 $(TEST_DISK2)
+	python3 tools/qemu_test.py --qemu $(QEMU_TEST) --iso $(FULLTEST_ISO) --disk $(TEST_DISK) --disk2 $(TEST_DISK2) \
+		--log $(BUILD)/serial.log --timeout 600 $(TEST_ARGS) --expect "1.7: full volumes ok"
 	python3 tools/check_disk.py $(TEST_DISK) $(TEST_DISK2) --log $(BUILD)/serial.log
 
 # Kill QEMU in the middle of journaled ext4 writes, then check the disk with Linux and DOORS

@@ -39,7 +39,7 @@ The order below puts stability before features. Each step is a release with a te
 
 ---
 
-## Stage 1: finish the storage work (1.2 – 1.3)
+## Stage 1: finish the storage work ✅ (1.2.0 – 1.8.0)
 
 Data loss is the worst failure an OS can have, so storage comes first.
 
@@ -51,7 +51,7 @@ Data loss is the worst failure an OS can have, so storage comes first.
 | 1.4 | Damaged disks never crash DOORS: every on-disk value is range-checked ✅ (1.5.0) | A fuzzer that corrupts ext4 and FAT images at random (thousands of images) finds no panic; DOORS reports `ErcBrokenFile` ✅ (`make fuzz`: 9,000 images a run; 30,000 clean after the fixes. It runs the kernel's file system code on Linux with sanitizers, plus a 12 KB guarded stack) |
 | 1.5 | FAT safety: the "dirty" flag set while mounted, and `chkdsk`-style warnings at mount ✅ (1.6.0) | A power cut on FAT never makes DOORS crash; Linux `fsck.fat` reports what DOORS predicted ✅ (`make powercut` FAT runs; 30 of 30 matched while it was developed; planted cases of each problem on E: and H: in `make test`; a volume where writing is unsafe is mounted read-only) |
 | 1.6 | ext4 system disk: boot from an ext4 volume (GRUB on the disk), `\DOORS\` on ext4 ✅ (1.7.0) | `make smoke` passes with C: = ext4 ✅ (`smoke64.py --ext4`, part of `make smoke`: 25 rows, the last one checks the written disk with e2fsck and boots it again) |
-| 1.7 | Free-space and quota edge cases: disk full, inode full, 0-byte files, maximum name lengths | A test fills each volume to 100 % and back; e2fsck clean |
+| 1.7 | Free-space and quota edge cases: disk full, inode full, 0-byte files, maximum name lengths ✅ (1.8.0) | A test fills each volume to 100 % and back; e2fsck clean ✅ (`make fulltest`: FAT32, FAT16, FAT12, ext4 1K and 4K filled and freed, free space back exactly; edge cases, inode-full and root-full in every `make test`) |
 
 ## Stage 2: test and quality infrastructure (1.4)
 

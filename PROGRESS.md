@@ -12,7 +12,8 @@ contain its own hash, so the newest row says *(this commit)* and the next commit
 
 | When | Version | Commit | Step | What changed | Devlog |
 |---|---|---|---|---|---|
-| 2026-10-19 | 1.7.0 | *(this commit)* | ROADMAP 1.6 (M8b ✅) | Booting from an ext4 system disk (GRUB on the disk, no ISO); the CLI finds commands in any case; `make smoke` on both system disks | [10-19](devlogs/2026-10-19.md) |
+| 2026-10-19 | 1.8.0 | *(this commit)* | ROADMAP 1.7 (Stage 1 ✅) | Full volumes: clean `ErcDiskFull`, ext4 rollback of failed operations; FILESYS path-length security fix; faster FAT writes; `df`; `make fulltest` | [10-19](devlogs/2026-10-19.md) |
+| 2026-10-19 | 1.7.0 | `bb50bef` | ROADMAP 1.6 (M8b ✅) | Booting from an ext4 system disk (GRUB on the disk, no ISO); the CLI finds commands in any case; `make smoke` on both system disks | [10-19](devlogs/2026-10-19.md) |
 | 2026-10-19 | 1.6.0 | `a0d2159` | ROADMAP 1.5 | FAT after a power cut: dirty flag, chkdsk-style check at mount that matches `fsck.fat`, read-only when writing is unsafe; FAT power-cut runs. Also: this file, ROADMAP Stage 8 (networking) | [10-19](devlogs/2026-10-19.md) |
 | 2026-10-18 | 1.5.0 | `fc0e610` | ROADMAP 1.4 | Damaged-disk fuzzer (`make fuzz`); ext4 fixes for damaged extent trees, directory sizes and superblocks; hashed block cache (`make test` 240 → 106 s) | [10-18](devlogs/2026-10-18.md) |
 | 2026-10-18 | 1.4.0 | `8a68574` | ROADMAP 1.3 | ext4 journals with checksums (csum_v3) written instead of read-only | [10-18](devlogs/2026-10-18.md) |

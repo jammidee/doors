@@ -1767,6 +1767,280 @@ static void test_deep_extents(void)
 	kprintf("M8b: deep extent trees ok (480 extents at depth 2: split, cut, grow, delete)\n");
 }
 
+/* ---- ROADMAP 1.7: full volumes, 0-byte files, maximum name lengths ---- */
+
+static U32 put_num(char *p, U32 n, U32 digits)
+{
+	U32 i;
+
+	for (i = digits; i > 0; i--, n /= 10)
+		p[i - 1] = (char)('0' + n % 10);
+	return digits;
+}
+
+/* "X:\DIR\Pnnnn.BIN" */
+static U32 full_name(char *p, char vol, const char *dir, char pre, U32 i)
+{
+	U32 n = 0, l = (U32)strlen(dir);
+
+	p[n++] = vol;
+	p[n++] = ':';
+	p[n++] = '\\';
+	memcpy(p + n, dir, l);
+	n += l;
+	p[n++] = '\\';
+	p[n++] = pre;
+	n += put_num(p + n, i, 5);
+	memcpy(p + n, ".BIN", 5);
+	return n + 4;
+}
+
+static void space(char vol, struct vol_space *s)
+{
+	erc_t erc = GetVolSpace(vol, s);
+
+	CHECK(erc == ErcOk && s->unit && s->total, "GetVolSpace(%c): %u", vol, erc);
+}
+
+/* Fill vol with 1 MB files until it is full, check what a full disk does, then free it all: the
+   free space must come back exactly. Written 64 KB at a time (on ext4 each WriteBytes is one
+   journal transaction). */
+static U8 fillbuf[65536];
+
+static void fill_volume(char vol)
+{
+	char dir[8] = "X:\\FULL", p[40];
+	struct vol_space s0, s1, s2;
+	U32 h, i, n, pl;
+	U64 done, size, written = 0, off, k, j;
+	erc_t erc = ErcOk;
+
+	dir[0] = vol;
+	space(vol, &s0);
+	CHECK(CreateDir(dir, 7) == ErcOk, "%c: mkdir FULL", vol);
+	for (i = 0; erc == ErcOk; i++) {
+		pl = full_name(p, vol, "FULL", 'F', i);
+		if ((erc = CreateFile(p, pl, 0)) == ErcDiskFull)
+			break;				/* no room left for a directory entry / inode */
+		CHECK(erc == ErcOk && OpenFile(p, pl, ModeModify, 1, &h) == ErcOk, "%c: create %s: %u", vol, p, erc);
+		for (off = 0, written = 0; off < (1 << 20) && erc == ErcOk; off += k) {
+			k = sizeof(fillbuf);
+			for (j = 0; j < k; j++)
+				fillbuf[j] = patb(off + j, 7 + i % 5);
+			done = 0;
+			erc = WriteBytes(h, fillbuf, k, &done);
+			written += done;
+			CHECK(done <= k, "%c: WriteBytes reported %lu of %lu", vol, done, k);
+		}
+		CHECK(GetFileSize(h, &size) == ErcOk && size == written,
+		      "%c: %s holds %lu bytes, but WriteBytes reported %lu (error %u)", vol, p, size, written, erc);
+		CloseFile(h);
+		CHECK(erc == ErcOk || erc == ErcDiskFull, "%c: write %s: error %u", vol, p, erc);
+	}
+	n = i;						/* files F00000 .. n-1 exist */
+	space(vol, &s1);
+	CHECK(s1.free * s1.unit <= 64 * 1024, "%c: full, but %lu units are still free", vol, s1.free);
+	/* at 100 %: more data doesn't fit; the files are intact */
+	pl = full_name(p, vol, "FULL", 'F', 0);
+	CHECK(OpenFile(p, pl, ModeModify, 1, &h) == ErcOk && SetFileLFA(h, ~0UL) == ErcOk, "%c: reopen", vol);
+	memset(fbuf, 0x55, sizeof(fbuf));
+	erc = WriteBytes(h, fbuf, sizeof(fbuf), &done);
+	CHECK(erc == ErcDiskFull || (erc == ErcOk && done == sizeof(fbuf)), "%c: write at full: %u", vol, erc);
+	CHECK(erc != ErcOk || s1.free, "%c: a write succeeded with no free space", vol);
+	if (erc == ErcDiskFull) {
+		CHECK(GetFileSize(h, &size) == ErcOk && size == (1 << 20) + done, "%c: size after a full write", vol);
+		SetFileSize(h, 1 << 20);
+	} else {
+		SetFileSize(h, 1 << 20);
+	}
+	CloseFile(h);
+	/* empty files at 100 %, until the directory needs a block it can't get: on ext4 that create
+	   fails after its inode is taken, and must be rolled back (the inode count is checked below) */
+	{
+		U32 z;
+
+		for (z = 0; z < 2000 && (erc = CreateFile(p, full_name(p, vol, "FULL", 'Z', z), 0)) == ErcOk; z++)
+			;
+		CHECK(erc == ErcDiskFull, "%c: empty files at 100 %%: %u made, then error %u", vol, z, erc);
+		while (z--) {
+			pl = full_name(p, vol, "FULL", 'Z', z);
+			CHECK(OpenFile(p, pl, ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk,
+			      "%c: delete %s", vol, p);
+		}
+	}
+	pl = full_name(p, vol, "FULL", 'F', 0);
+	CHECK(check_pat(p, pl, 1 << 20, 7), "%c: the first file read back", vol);
+	pl = full_name(p, vol, "FULL", 'F', n - 1);
+	CHECK(check_pat(p, pl, written, 7 + (n - 1) % 5), "%c: the last (partial) file read back", vol);
+	for (i = 0; i < n; i++) {
+		pl = full_name(p, vol, "FULL", 'F', i);
+		CHECK(OpenFile(p, pl, ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk, "%c: delete %s", vol, p);
+	}
+	CHECK(DeleteDir(dir, 7) == ErcOk, "%c: rmdir FULL", vol);
+	space(vol, &s2);
+	CHECK(s2.free == s0.free && s2.inodes_free == s0.inodes_free,
+	      "%c: free space not back: %lu -> %lu units, inodes %lu -> %lu", vol, s0.free, s2.free,
+	      s0.inodes_free, s2.inodes_free);
+	kprintf("1.7: %c: filled to 100%% (%u files, %lu KB) and freed again (tick %lu)\n", vol, n,
+		(s0.free - s1.free) * s0.unit / 1024, timer_ticks());
+}
+
+/* ext4: empty files until no inode is left */
+static void fill_inodes(char vol)
+{
+	char dir[7] = "X:\\INO", p[40];
+	struct vol_space s0, s1, s2;
+	U32 i, h, pl;
+	erc_t erc = ErcOk;
+
+	dir[0] = vol;
+	space(vol, &s0);
+	CHECK(CreateDir(dir, 6) == ErcOk, "%c: mkdir INO", vol);
+	for (i = 0; (erc = CreateFile(p, full_name(p, vol, "INO", 'I', i), 0)) == ErcOk; i++)
+		;
+	CHECK(erc == ErcDiskFull, "%c: creating file %u: error %u", vol, i, erc);
+	space(vol, &s1);
+	CHECK(s1.inodes_free == 0, "%c: CreateFile failed with %lu inodes free", vol, s1.inodes_free);
+	while (i--) {
+		pl = full_name(p, vol, "INO", 'I', i);
+		CHECK(OpenFile(p, pl, ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk, "%c: delete %s", vol, p);
+	}
+	CHECK(DeleteDir(dir, 6) == ErcOk, "%c: rmdir INO", vol);
+	space(vol, &s2);
+	CHECK(s2.free == s0.free && s2.inodes_free == s0.inodes_free, "%c: inodes not back: %lu -> %lu",
+	      vol, s0.inodes_free, s2.inodes_free);
+	kprintf("1.7: %c: all %lu free inodes used and freed again\n", vol, s0.inodes_free);
+}
+
+/* FAT12/16: the fixed root directory fills up */
+static void fill_root(char vol)
+{
+	char p[40];
+	struct vol_space s0, s2;
+	U32 i, h, pl;
+	erc_t erc;
+
+	space(vol, &s0);
+	for (i = 0; (erc = CreateFile(p, full_name(p, vol, "", 'R', i) , 0)) == ErcOk; i++)
+		;
+	CHECK(erc == ErcRootFull && i > 100, "%c: root full after %u files: error %u", vol, i, erc);
+	while (i--) {
+		pl = full_name(p, vol, "", 'R', i);
+		CHECK(OpenFile(p, pl, ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk, "%c: delete %s", vol, p);
+	}
+	space(vol, &s2);
+	CHECK(s2.free == s0.free, "%c: root fill changed the free space", vol);
+	kprintf("1.7: %c: root directory filled (ErcRootFull) and emptied\n", vol);
+}
+
+/* 0-byte files and the longest names (255; 256 is refused) */
+/* 12 names of 255 characters, the longest FAT (VFAT) and ext4 allow, in the root ("X:\" + 255 =
+   258 < MAX_PATH), alike but for their end (FAT: aliases NAME~1 .. NAME~12); a 256th character
+   is refused. Created, written, listed and deleted again. */
+static void long_names(char vol)
+{
+	static char p[MAX_PATH + 8];
+	struct dir_entry de;
+	U32 h, i, k;
+
+	p[0] = vol;
+	p[1] = ':';
+	p[2] = '\\';
+	for (k = 0; k < 12; k++) {
+		for (i = 0; i < 255; i++)
+			p[3 + i] = (char)('a' + (i + (i > 240 ? k : 0)) % 26);
+		CHECK(CreateFile(p, 3 + 255, 0) == ErcOk, "%c: a 255-character name (%u)", vol, k);
+		CHECK(write_pat(p, 3 + 255, 100, 3 + k) == ErcOk && check_pat(p, 3 + 255, 100, 3 + k),
+		      "%c: 255-character name %u: data", vol, k);
+	}
+	for (i = 0, k = 0; ReadDir(p, 3, i, &de) == ErcOk; i++)
+		k += strlen(de.name) == 255 && de.size == 100;
+	CHECK(k == 12, "%c: ReadDir lists %u of the 12 long names", vol, k);
+	p[3 + 255] = 'z';
+	CHECK(CreateFile(p, 3 + 256, 0) == ErcBadFileSpec, "%c: a 256-character name must be refused", vol);
+	for (k = 0; k < 12; k++) {
+		for (i = 0; i < 255; i++)
+			p[3 + i] = (char)('a' + (i + (i > 240 ? k : 0)) % 26);
+		CHECK(OpenFile(p, 3 + 255, ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk,
+		      "%c: delete long name %u", vol, k);
+	}
+}
+
+static void edge_names(char vol)
+{
+	static char p[MAX_PATH + 8];
+	struct dir_entry de;
+	struct vol_space s0, s1, s2;
+	U32 h, i;
+	U64 done, size;
+	char d[] = "X:\\EDGE";
+
+	d[0] = vol;
+	space(vol, &s0);
+	CHECK(CreateDir(d, 7) == ErcOk, "%c: mkdir EDGE", vol);
+	/* a 0-byte file: read, write nothing, size, rename, delete */
+	memcpy(p, d, 7);
+	memcpy(p + 7, "\\ZERO.BIN", 10);
+	CHECK(CreateFile(p, 16, 0) == ErcOk && OpenFile(p, 16, ModeModify, 1, &h) == ErcOk, "%c: zero file", vol);
+	CHECK(ReadBytes(h, fbuf, 100, &done) == ErcEOF && done == 0, "%c: read a 0-byte file", vol);
+	CHECK(WriteBytes(h, fbuf, 0, &done) == ErcOk && done == 0, "%c: write 0 bytes", vol);
+	CHECK(SetFileSize(h, 0) == ErcOk && GetFileSize(h, &size) == ErcOk && size == 0, "%c: size 0", vol);
+	CloseFile(h);
+	{
+		char q[] = "X:\\EDGE\\ZERO2.BIN";
+
+		q[0] = vol;
+		CHECK(RenameFile(p, 16, q, sizeof(q) - 1) == ErcOk, "%c: rename a 0-byte file", vol);
+		CHECK(ReadDir(d, 7, 0, &de) == ErcOk && de.size == 0 && !strcmp(de.name, "ZERO2.BIN"),
+		      "%c: ReadDir of the 0-byte file", vol);
+		CHECK(OpenFile(q, sizeof(q) - 1, ModeModify, 1, &h) == ErcOk && DeleteFile(h) == ErcOk,
+		      "%c: delete the 0-byte file", vol);
+	}
+	/* a path longer than MAX_PATH is refused (by FILESYS itself: kernel callers don't check) */
+	memcpy(p, d, 7);
+	for (i = 7; i < MAX_PATH + 4; i++)
+		p[i] = i % 9 == 7 ? '\\' : 'q';
+	CHECK(CreateFile(p, MAX_PATH + 4, 0) == ErcBadFileSpec, "%c: a path > MAX_PATH", vol);
+	CHECK(DeleteDir(d, 7) == ErcOk, "%c: rmdir EDGE", vol);
+	space(vol, &s2);
+	CHECK(s2.free == s0.free && s2.inodes_free == s0.inodes_free, "%c: edge tests changed the free space", vol);
+	/* twice: the root directory may grow the first time (directories don't shrink, on Linux
+	   either), but the second time must reuse the freed entries, with nothing lost */
+	long_names(vol);
+	space(vol, &s1);
+	CHECK(s0.free - s1.free <= 12 * 21 * 32 / s0.unit + 2 && s1.inodes_free == s0.inodes_free,
+	      "%c: long names took %lu units", vol, s0.free - s1.free);
+	long_names(vol);
+	space(vol, &s2);
+	CHECK(s2.free == s1.free && s2.inodes_free == s1.inodes_free, "%c: long names: %lu -> %lu units free",
+	      vol, s1.free, s2.free);
+	kprintf("1.7: %c: 0-byte files, 255-character names (12 alike), 256 and > MAX_PATH refused\n", vol);
+}
+
+/* make test: 0-byte files, the longest names, a full root directory, no inodes left, a read-only
+   volume. make fulltest also fills each file system and block size to 100 % once: FAT32 C:,
+   FAT16 D:, FAT12 E:, ext4 with 1K blocks G:, ext4 with 4K blocks I: (16 MB, 128 inodes:
+   tools/mkdisk.py; F: is the same kind but 64 MB). That takes about 3 minutes through ATA PIO. */
+static void test_full(bool full)
+{
+	char vols[] = "CDEGI";
+	U32 i;
+	U64 t0 = timer_ticks();
+
+	CHECK(CreateFile(S("H:\\NO.TXT"), 0) == ErcReadOnly, "H: (read-only) accepted a new file");
+	edge_names('C');
+	edge_names('F');
+	fill_root('D');
+	fill_root('E');
+	fill_inodes('I');
+	kprintf("1.7: edge cases ok\n");
+	if (!full)
+		return;
+	for (i = 0; vols[i]; i++)
+		fill_volume(vols[i]);
+	kprintf("1.7: full volumes ok (%lu s)\n", (timer_ticks() - t0) / 100);	/* 10 ms ticks */
+}
+
 static void test_ext4_jobs(void)
 {
 	const struct job *j;
@@ -1808,7 +2082,7 @@ static __attribute__((noinline)) U64 recurse(U64 n)
 	return recurse(n + 1) + buf[0];		/* not a tail call */
 }
 
-void selftest_run(void)
+void selftest_run(bool full)
 {
 	test_timer();
 	test_breakpoint();
@@ -1855,6 +2129,7 @@ void selftest_run(void)
 	test_job_calls();
 	test_cli();
 	test_samples();
+	test_full(full);
 
 	ext4_unmount();				/* the disk is checked by tools/check_disk.py next */
 	fat_unmount();

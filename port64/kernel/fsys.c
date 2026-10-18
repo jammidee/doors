@@ -25,7 +25,7 @@
 
 enum { FS_OPEN = 1, FS_CLOSE, FS_CREATE, FS_DELETE, FS_RENAME, FS_MKDIR, FS_RMDIR, FS_READB,
        FS_WRITEB, FS_READBLK, FS_WRITEBLK, FS_GETSIZE, FS_SETSIZE, FS_GETLFA, FS_SETLFA,
-       FS_DIRSEC, FS_READDIR };
+       FS_DIRSEC, FS_READDIR, FS_SPACE };
 
 struct fs_req {
 	U32 handle, mode, stream, attr, sectnum;
@@ -119,11 +119,16 @@ static erc_t do_open(struct RqBlk *r, struct fs_req *q, struct volume *v, const 
 /* MMURTL FSYS.C BuildSpec: a name with a drive ("C:...") is used as it is; one that starts with
    '\' gets the drive of the requesting job's path (SetPath); any other name, also an empty one,
    is appended to the job's whole path. */
+/* The length comes from the requester (a program may send FILESYS a Request itself, with any
+   cbData1 or name2_len): anything that doesn't fit out[MAX_PATH] is refused here. Without this,
+   a 264-byte path ran past the static spec[] into fs_exch (found by the 1.7 edge tests). */
 static U32 build_spec(U32 job, const char *name, U32 len, char *out)
 {
 	char jp[80];
 	U32 n = 0;
 
+	if (len >= MAX_PATH)
+		return MAX_PATH;			/* too long: the callers refuse it */
 	if (len >= 2 && name[1] == ':') {
 		memcpy(out, name, len);
 		return len;
@@ -225,6 +230,17 @@ static erc_t serve(struct RqBlk *r, struct fs_req *q)
 	    r->ServiceCode == FS_RENAME || r->ServiceCode == FS_RMDIR || r->ServiceCode == FS_DIRSEC ||
 	    r->ServiceCode == FS_READDIR)
 		return serve_path(r, q);
+	if (r->ServiceCode == FS_SPACE) {
+		struct volume *v = vol_get(q->name2[0]);
+
+		if (!v)
+			return ErcNoSuchDrive;
+		if (!v->ops || !v->ops->space)
+			return ErcNotSupported;
+		if (r->cbData1 < sizeof(struct vol_space))
+			return ErcBadMemReq;
+		return v->ops->space(v, (struct vol_space *)r->pData1);
+	}
 
 	o = handle(q->handle, r->RqOwnerJob);
 	if (!o)
@@ -359,7 +375,7 @@ static erc_t call(U32 code, const void *p1, U64 cb1, struct fs_req *q)
 {
 	U64 h, m[2];
 	U32 nsend = (code == FS_READB || code == FS_READBLK || code == FS_DIRSEC ||
-		     code == FS_READDIR) ? 0 : 1;
+		     code == FS_READDIR || code == FS_SPACE) ? 0 : 1;
 	erc_t erc;
 
 	erc = Request("FILESYS ", code, current->exch, &h, nsend, (U8 *)p1, cb1, (U8 *)q, sizeof(*q),
@@ -531,4 +547,14 @@ erc_t ReadDir(const char *pPath, U32 cbPath, U32 dIndex, struct dir_entry *pEntr
 	q.name2_len = cbPath;
 	q.sectnum = dIndex;
 	return call(FS_READDIR, pEntryRet, sizeof(*pEntryRet), &q);
+}
+
+erc_t GetVolSpace(char drive, struct vol_space *pSpaceRet)
+{
+	struct fs_req q;
+
+	memset(&q, 0, sizeof(q));
+	q.name2[0] = drive;
+	q.name2_len = 1;
+	return call(FS_SPACE, pSpaceRet, sizeof(*pSpaceRet), &q);
 }

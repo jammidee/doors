@@ -108,7 +108,8 @@ static void cmd(const char *line)
 			"spin   start two busy tasks for 3 s (watch time slicing in 'tasks')\n"
 			"run X  load boot module X as a new job (LoadNewJob)\n"
 			"jobs   list jobs;  kill N  end job N (KillJob)\n"
-			"vols   volumes;  dir C:\\PATH  list a directory;  type C:\\FILE  show a file\n"
+			"vols   volumes;  df  their size and free space\n"
+			"dir C:\\PATH  list a directory;  type C:\\FILE  show a file\n"
 			"run C:\\BIN\\HELLO.ELF  load a program from a file\n"
 			"int3   breakpoint exception (handled, execution continues)\n"
 			"pf     page fault at 0xdead0000 (register dump + panic)\n"
@@ -124,6 +125,25 @@ static void cmd(const char *line)
 		while (*q >= '0' && *q <= '9')
 			j = j * 10 + (U32)(*q++ - '0');
 		kprintf("SetVidOwner(%u): %u\n", j, SetVidOwner(j));
+	} else if (!strcmp(line, "df")) {
+		struct volume *v;
+		U32 i;
+
+		for (i = 0; (v = vol_index(i)); i++) {
+			struct vol_space sp;
+			erc_t erc = GetVolSpace(v->letter, &sp);
+
+			if (erc) {
+				kprintf("%c:  not mounted (%u)\n", v->letter, erc);
+				continue;
+			}
+			kprintf("%c:  %6lu KB, %6lu KB free (%lu%%), %lu-byte units", v->letter,
+				sp.total * sp.unit / 1024, sp.free * sp.unit / 1024,
+				sp.total ? sp.free * 100 / sp.total : 0, sp.unit);
+			if (sp.inodes)
+				kprintf(", inodes %lu of %lu free", sp.inodes_free, sp.inodes);
+			kprintf("%s\n", v->ro ? ", read-only" : "");
+		}
 	} else if (!strcmp(line, "sync")) {
 		ext4_unmount();
 		fat_unmount();
@@ -358,7 +378,7 @@ void kmain(U32 magic, U64 mbi_phys)
 	vid_clock_base(unix_time());	/* the status line clock counts from here */
 
 	if (test_mode)
-		selftest_run();
+		selftest_run(cmdline_has(boot_info.cmdline, "full"));	/* make fulltest: "test full" */
 	if (cmdline_has(boot_info.cmdline, "powercut"))		/* tools/powercut.py */
 		powercut_run(boot_info.cmdline);
 	if (cmdline_has(boot_info.cmdline, "pccheck"))

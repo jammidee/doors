@@ -139,9 +139,12 @@ def damage_fat12(img, tmp, unsafe):
 
 # ---- the second test disk (device 13): GPT; G: ext4 with 1K blocks, H: a damaged FAT12 ----
 # ONE and TWO are htree directories (e2fsck -D indexes them): ONE has one index level, TWO two.
-D2_TOTAL = 98304                 # 48 MB
+D2_TOTAL = 131072                # 64 MB
 D2_START, D2_SECTORS = 2048, 65536
 D2_H_START, D2_H_SECTORS = D2_START + D2_SECTORS, 8192
+# I: a small ext4 (4K blocks, 128 inodes, journal, metadata_csum) for the full-volume tests (ROADMAP
+# 1.7): filling F: or emptying 4,000 inodes would take minutes through ATA PIO
+D2_I_START, D2_I_SECTORS = D2_H_START + D2_H_SECTORS, 32768
 D2_README = b"1K-block ext4 on a GPT disk.\n"
 
 
@@ -206,8 +209,14 @@ def make_disk2(out, tmp):
     run("mkfs.fat", "-F", "12", "-n", "DOORSH", "-h", str(D2_H_START), "-S", "512", h)
     put(h, b"intact\n", "OK.TXT", tmp)
     damage_fat12(h, tmp, True)
+    i4 = os.path.join(tmp, "i.img")
+    with open(i4, "wb") as f:
+        f.truncate(D2_I_SECTORS * SEC)
+    run("mkfs.ext4", "-q", "-F", "-T", "default", "-b", "4096", "-I", "256", "-N", "128", "-L", "DOORS-SMALL",
+        i4, str(D2_I_SECTORS // 8))
     gpt_disk(out, [(D2_START, D2_SECTORS, "0FC63DAF-8483-4772-8E79-3D69D8477DE4", "DOORS-1K", img),
-                   (D2_H_START, D2_H_SECTORS, "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", "DOORS-H", h)])
+                   (D2_H_START, D2_H_SECTORS, "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7", "DOORS-H", h),
+                   (D2_I_START, D2_I_SECTORS, "0FC63DAF-8483-4772-8E79-3D69D8477DE4", "DOORS-SMALL", i4)])
 
 
 def e4bmap(img, args):

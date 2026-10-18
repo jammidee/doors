@@ -17,9 +17,11 @@
 | kernel stack per task | 16 KB + guard page | `kernel/sched.c` |
 | user stack (first task) | 64 KB + guard page | `include/doors/mem.h` |
 | open files (whole system) | 128 | `kernel/fsys.c` |
-| volumes | 8 | `include/doors/fs.h` |
-| path length | 259 characters | `include/doors/fs.h` |
+| volumes | 8 (`make test` uses 7: C:–F: and the second disk's G:–I:) | `include/doors/fs.h` |
+| path length | 259 characters, checked by FILESYS for every request | `include/doors/fs.h` |
 | name length | 255 characters | `include/doors/dirent.h` |
+| entries in a FAT directory | 65,536 (FAT's own limit) | `kernel/fat.c` |
+| ext4 blocks kept back from file data | 8 (for the extent-tree and directory blocks of the same operation); no 5 % root reserve | `kernel/ext4.c` |
 | command line | 79 characters | `kernel/syscall.c` |
 | block cache | 1024 sectors (512 KB) | `kernel/bcache.c` |
 | disks | ATA devices 12–15 | `drivers/ata.c` |

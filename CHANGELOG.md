@@ -12,6 +12,33 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.8.0 — 2026-10-19 — full volumes, empty files, the longest names
+- **Security fix in FILESYS:** a path with a drive letter was copied into a 260-byte static buffer
+  without a length check. A longer one ran into the next kernel variable (FILESYS's own exchange)
+  and hung the file system. Any program could send FILESYS such a `Request` directly. FILESYS now
+  checks every length it receives.
+- **A full disk is handled cleanly:**
+  - FAT and ext4 writes write what fits and report it exactly with `ErcDiskFull`.
+  - FAT gives back the clusters a failed grow got (before, the chain stayed longer than the file).
+  - ext4 keeps 8 blocks back from file data for the operation's own metadata, and **rolls back
+    any operation that fails half-way** (its journal transaction is dropped), so a failure never
+    leaves blocks or inodes half-allocated.
+- **FAT writes are much faster:**
+  - Whole sectors go to the disk in runs of up to 64 in one ATA command.
+  - The FAT sectors an operation changes are written once at its end (before its directory
+    entry), not 4 sector writes per new cluster.
+  - Growing a file with `SetFileSize` zeroes only the old last cluster's tail.
+- **`GetVolSpace`** (kernel) and the monitor's **`df`**: size, free space and free inodes. ext4's
+  free counts are made exact at mount.
+- **Tests:**
+  - Every `make test` now covers 0-byte files, 255-character names (12 alike, for FAT's `~N`
+    aliases), a refused 256th character and a refused over-long path, a full FAT12/16 root
+    directory, an ext4 volume with no inodes left, and writing to the read-only H:.
+  - New **`make fulltest`** also fills FAT32, FAT16, FAT12, ext4 (1K) and ext4 (4K) to 100 % and
+    back. Free space and inodes must come back exactly, and `e2fsck`/`fsck.fat` must be clean.
+  - A small ext4 volume I: (16 MB, 128 inodes) is on the second test disk, which grows to 64 MB.
+  - `QEMU_TEST=` runs `make test` with another QEMU (for gdb on a hung test).
+
 ## 1.7.0 — 2026-10-19 — M8b done: booting from an ext4 system disk
 - **An ext4 system disk that boots by itself:** `mkdisk.py --system ext4` makes a disk with GRUB in
   its first track. C: = ext4 holds `boot\` (the kernel, its modules, GRUB's files) and the system

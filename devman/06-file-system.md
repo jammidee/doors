@@ -169,7 +169,8 @@ middle of a call can leave the volume damaged. DOORS deals with this as Linux an
   waste space or cut a file short, so the volume stays writable. A damaged file gives
   `ErcBrokenFile` when it is read past the damage.
 - **What a cut can leave,** given the order DOORS writes in: a chain longer than the size (a write
-  grows the chain, then updates the size), a free cluster at the start of a chain (a truncate
+  puts the data in place, then the FAT sectors it changed, then the size in the directory entry;
+  a cut before the FAT leaves the file as it was), a free cluster at the start of a chain (a truncate
   frees the chain, then updates the entry), lost clusters (a delete marks the entry, then frees
   the chain), two entries for one chain (a rename adds the new entry, then deletes the old one),
   and FAT copies that differ (each change goes to FAT 1, then FAT 2). None of these loses a
@@ -224,6 +225,31 @@ ext4 volumes made by `mkfs.ext4` have a journal (JBD2), and DOORS uses it as Lin
   checks them on replay. A transaction with a wrong checksum ends the log: it and the ones after it
   are not replayed, and the boot log says `... has a bad checksum: the log ends there`.
 - An external journal means read-only.
+
+### Full volumes, empty files, long names
+
+- **A full disk** gives `ErcDiskFull`. A write writes as much as fits first: the file then holds
+  exactly the bytes `WriteBytes` reported, and nothing is left half-allocated. On FAT the clusters
+  the chain got beyond the new size are given back. On ext4, data blocks are only handed out while
+  more than 8 stay free, so the metadata of the same operation (extent tree splits) always finds
+  room. The last 8 blocks hold directory growth and tree splits. ext4's reserve for root (5 %) is
+  not kept: DOORS has no users yet.
+- **An ext4 operation that fails half-way** (no block for a split or a new directory block, a
+  damaged block) is undone: its metadata changes were only in the journal transaction, which is
+  dropped instead of committed. The volume is exactly as before, and a write reports 0 bytes.
+- **No inode left** (ext4) also gives `ErcDiskFull`. A full fixed root directory (FAT12/16, usually
+  512 entries) gives `ErcRootFull`. A FAT directory ends at 65,536 entries (`ErcDirFull`).
+  Directories don't shrink when files are deleted, on Linux either, so their space comes back
+  only when the directory is removed.
+- **0-byte files** work like any other: create, open, read (`ErcEOF` at once), write 0 bytes,
+  `SetFileSize(0)`, rename, delete. On FAT they have no cluster, and on ext4 no block.
+- **Names** can be 255 characters (VFAT long names, ext4 names), and a 256th is refused with
+  `ErcBadFileSpec`. A whole path, drive included, must be shorter than 260 characters
+  (`MAX_PATH`), so the longest names fit only near the root. FILESYS itself checks the length of
+  every path it receives, also from programs that send it a `Request` directly.
+- **Free space:** the monitor's `df`, or `GetVolSpace(drive, &space)` in the kernel (`struct
+  vol_space`: unit, total, free, inodes, free inodes). FAT counts its free clusters; ext4 adds up
+  the group descriptors, and its free counts are made exact at mount.
 
 ### Damaged disks
 

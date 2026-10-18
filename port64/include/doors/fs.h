@@ -65,6 +65,13 @@ struct fnode {			/* a file or directory as found by a lookup */
 	char name[256];			/* that name (ext4 needs it to unlink/rename) */
 };
 
+/* A volume's size and free space (GetVolSpace, the monitor's df). */
+struct vol_space {
+	U64 unit;			/* bytes per allocation unit: the cluster or block size */
+	U64 total, free;		/* units */
+	U64 inodes, inodes_free;	/* ext4; 0 on FAT (no inode limit, only the root directory's) */
+};
+
 /* What a file system provides to the FILESYS service. Paths include the drive ("C:\..."). */
 struct fs_ops {
 	const char *name;
@@ -78,6 +85,7 @@ struct fs_ops {
 	erc_t (*readdir)(struct fnode *dir, U32 index, struct dir_entry *out);
 	bool  (*dir_empty)(struct fnode *dir);
 	erc_t (*dir_sector)(struct fnode *dir, U32 sectnum, U8 *out);	/* FAT only (GetDirSector) */
+	erc_t (*space)(struct volume *v, struct vol_space *out);
 };
 
 extern const struct fs_ops fat_ops, ext4_ops;
@@ -124,6 +132,9 @@ erc_t GetSystemDisk(U8 *pDiskRet);		/* 0 = A, 1 = B, 2 = C ... */
 /* DOORS addition (system call 110, after MMURTL's): entry dIndex of a directory, any file system.
    '.' and '..' are not returned. Past the last entry: ErcNoMatch. */
 erc_t ReadDir(const char *pPath, U32 cbPath, U32 dIndex, struct dir_entry *pEntryRet);
+
+/* DOORS addition (kernel, the monitor's df): size and free space of volume `drive` ('C' ...). */
+erc_t GetVolSpace(char drive, struct vol_space *pSpaceRet);
 
 /* power-cut test (kernel/powercut.c): halt inside the K-th journal commit when set */
 extern U32 ext4_commit_stop;

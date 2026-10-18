@@ -211,6 +211,17 @@ def check_disk2(disk2, tmp):
     check("G:\\ONE has exactly the 380 expected names", names["ONE"] == one, f"{len(names['ONE'])} names")
     check("G:\\TWO has exactly the 720 expected names", names["TWO"] == two, f"{len(names['TWO'])} names")
 
+    # I: (small ext4, 4K blocks, 128 inodes): every inode used and freed (make test), filled to 100 %
+    # and freed (make fulltest)
+    from mkdisk import D2_I_START, D2_I_SECTORS
+    i4 = os.path.join(tmp, "i.img")
+    with open(disk2, "rb") as f, open(i4, "wb") as o:
+        f.seek(D2_I_START * SEC)
+        o.write(f.read(D2_I_SECTORS * SEC))
+    r = subprocess.run(["e2fsck", "-fn", i4], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    check("e2fsck -fn I: ext4 (filled and emptied): no errors", r.returncode == 0,
+          r.stdout.decode(errors="replace").strip().splitlines()[-3:])
+
     # H: (FAT12) was left dirty with problems that make writing unsafe: DOORS mounts it read-only,
     # so it must be exactly as mkdisk left it
     from mkdisk import D2_H_START, D2_H_SECTORS

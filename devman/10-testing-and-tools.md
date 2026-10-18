@@ -13,8 +13,20 @@
 4. checks the disk the kernel wrote with Linux tools (`tools/check_disk.py`).
 
 It passes when QEMU exits with status 33, every expected line appeared in the serial log, and the
-disk check prints `CHECK_DISK PASS`. Status 35, a `DOORS PANIC: ...` line, or a timeout (240 s; a run takes about 75 s)
-is a failure. The serial log is kept in `build/serial.log`.
+disk check prints `CHECK_DISK PASS`. Status 35, a `DOORS PANIC: ...` line, or a timeout (240 s; a run takes about 2 minutes)
+is a failure. The serial log is kept in `build/serial.log`. `QEMU_TEST=script` makes it run another
+QEMU, for example a script that adds `-s` so `gdb` can attach to a hung test.
+
+**`make fulltest`** is `make test` with the kernel command line `test full`. After the normal
+tests it fills FAT32 C:, FAT16 D:, FAT12 E:, ext4 G: (1K blocks) and ext4 I: (4K blocks, a small
+volume on the second disk) to 100 % with 1 MB files, checks what a full disk does, and frees
+everything again (`1.7: full volumes ok`). Then the same disk checks run. It takes about 5
+minutes, most of it ATA PIO, so it is a separate target (CI: ROADMAP 2.1). The edge cases,
+0-byte files, the longest names, a full root directory, no inodes left (I:) and the read-only H:,
+run in every `make test` (`1.7: edge cases ok`).
+
+(KVM doesn't help here. WSL 2 offers `/dev/kvm`, but there it is nested inside Hyper-V, and every
+port access of ATA PIO costs more than under plain emulation: a try with `-accel kvm` ran slower.)
 
 ### What the self-tests cover
 

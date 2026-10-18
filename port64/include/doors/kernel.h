@@ -13,7 +13,8 @@ extern bool test_mode;
 #define QEMU_EXIT_FAIL 0x11	/* status 35 */
 void qemu_exit(U8 code);
 
-/* In-kernel milestone self-tests (kernel/selftest.c), run when test_mode is set. */
-NORETURN void selftest_run(void);
+/* In-kernel milestone self-tests (kernel/selftest.c), run when test_mode is set. full: also fill
+   every volume to 100 % and back (make fulltest, kernel command line "test full"). */
+NORETURN void selftest_run(bool full);
 
 #endif

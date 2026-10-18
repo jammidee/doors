@@ -171,6 +171,68 @@ static U32 eoc_val(struct fat *f) { return f->type == 12 ? 0xFFF : f->type == 16
 static bool valid_clus(struct fat *f, U32 c) { return c >= 2 && c < f->nclus + 2; }
 static U64 clus_lba(struct fat *f, U32 c) { return f->data_lba + (U64)(c - 2) * f->spc; }
 
+/* FAT sectors changed by the running operation wait here and go to the disk once each, in the
+   order they were first changed (copy 1's before copy 2's), at the end of the operation
+   (fat_flush, called by the fat_ops wrappers): growing a file by N clusters costs a few sector
+   writes instead of 4 N. The operation's file data is written before them and its directory
+   entry after them, so a power cut before the flush leaves the file as it was (its new data in
+   clusters the FAT still calls free). */
+#define FATQ 32
+static struct {
+	struct fat *f;
+	U64 lba;
+	U8 b[512];
+} fq[FATQ];
+static U32 nfq;
+
+static erc_t fat_flush(void)
+{
+	U32 i;
+	erc_t erc = ErcOk, e2;
+
+	for (i = 0; i < nfq; i++)
+		if ((e2 = wr(fq[i].f, fq[i].lba, fq[i].b)) && !erc)
+			erc = e2;
+	nfq = 0;
+	return erc;
+}
+
+static S32 fq_find(struct fat *f, U64 lba)
+{
+	U32 i;
+
+	for (i = 0; i < nfq; i++)
+		if (fq[i].f == f && fq[i].lba == lba)
+			return (S32)i;
+	return -1;
+}
+
+static erc_t fat_rd(struct fat *f, U64 lba, U8 *b)
+{
+	S32 i = fq_find(f, lba);
+
+	if (i < 0)
+		return rd(f, lba, b);
+	memcpy(b, fq[i].b, 512);
+	return ErcOk;
+}
+
+static erc_t fat_wr(struct fat *f, U64 lba, const U8 *b)
+{
+	S32 i = fq_find(f, lba);
+	erc_t erc;
+
+	if (i < 0) {
+		if (nfq == FATQ && (erc = fat_flush()))	/* full: write them now, go on */
+			return erc;
+		i = (S32)nfq++;
+		fq[i].f = f;
+		fq[i].lba = lba;
+	}
+	memcpy(fq[i].b, b, 512);
+	return ErcOk;
+}
+
 static erc_t fat_get(struct fat *f, U32 c, U32 *v)
 {
 	U8 b[512], b2[512];
@@ -181,10 +243,10 @@ static erc_t fat_get(struct fat *f, U32 c, U32 *v)
 	if (f->type == 12) {
 		off = c + c / 2;
 		o = (U32)(off % 512);
-		if ((erc = rd(f, f->fat_lba + off / 512, b)))
+		if ((erc = fat_rd(f, f->fat_lba + off / 512, b)))
 			return erc;
 		if (o == 511) {
-			if ((erc = rd(f, f->fat_lba + off / 512 + 1, b2)))
+			if ((erc = fat_rd(f, f->fat_lba + off / 512 + 1, b2)))
 				return erc;
 			*v = b[511] | (b2[0] << 8);
 		} else {
@@ -193,12 +255,12 @@ static erc_t fat_get(struct fat *f, U32 c, U32 *v)
 		*v = (c & 1) ? *v >> 4 : *v & 0xFFF;
 	} else if (f->type == 16) {
 		off = (U64)c * 2;
-		if ((erc = rd(f, f->fat_lba + off / 512, b)))
+		if ((erc = fat_rd(f, f->fat_lba + off / 512, b)))
 			return erc;
 		*v = le16(b + off % 512);
 	} else {
 		off = (U64)c * 4;
-		if ((erc = rd(f, f->fat_lba + off / 512, b)))
+		if ((erc = fat_rd(f, f->fat_lba + off / 512, b)))
 			return erc;
 		*v = le32(b + off % 512) & 0x0FFFFFFF;
 	}
@@ -225,24 +287,24 @@ static erc_t put_byte_pair(struct fat *f, U64 lba, U32 o, U16 mask_lo, U16 val)
 	erc_t erc;
 	U16 cur;
 
-	if ((erc = rd(f, lba, b)))
+	if ((erc = fat_rd(f, lba, b)))
 		return erc;
 	if (o == 511) {
-		if ((erc = rd(f, lba + 1, b2)))
+		if ((erc = fat_rd(f, lba + 1, b2)))
 			return erc;
 		cur = (U16)(b[511] | (b2[0] << 8));
 		cur = (U16)((cur & mask_lo) | val);
 		b[511] = (U8)cur;
 		b2[0] = (U8)(cur >> 8);
-		if ((erc = wr(f, lba, b)))
+		if ((erc = fat_wr(f, lba, b)))
 			return erc;
-		return wr(f, lba + 1, b2);
+		return fat_wr(f, lba + 1, b2);
 	}
 	cur = (U16)(b[o] | (b[o + 1] << 8));
 	cur = (U16)((cur & mask_lo) | val);
 	b[o] = (U8)cur;
 	b[o + 1] = (U8)(cur >> 8);
-	return wr(f, lba, b);
+	return fat_wr(f, lba, b);
 }
 
 static erc_t fat_put(struct fat *f, U32 c, U32 v)
@@ -268,7 +330,7 @@ static erc_t fat_put(struct fat *f, U32 c, U32 v)
 			continue;
 		}
 		off = (U64)c * (f->type == 16 ? 2 : 4);
-		if ((erc = rd(f, fl + off / 512, b)))
+		if ((erc = fat_rd(f, fl + off / 512, b)))
 			return erc;
 		if (f->type == 16) {
 			b[off % 512] = (U8)v;
@@ -282,7 +344,7 @@ static erc_t fat_put(struct fat *f, U32 c, U32 v)
 			b[off % 512 + 2] = (U8)(v >> 16);
 			b[off % 512 + 3] = (U8)(v >> 24);
 		}
-		if ((erc = wr(f, fl + off / 512, b)))
+		if ((erc = fat_wr(f, fl + off / 512, b)))
 			return erc;
 	}
 	return ErcOk;
@@ -408,6 +470,8 @@ static erc_t dir_write(struct fat *f, U32 dclus, U32 idx, const U8 *e)
 	if ((erc = dir_loc(f, dclus, idx, &lba, &off, true)) || (erc = rd(f, lba, b)))
 		return erc;
 	memcpy(b + off, e, 32);
+	if ((erc = fat_flush()))		/* the FAT first: an entry never points into free clusters */
+		return erc;
 	return wr(f, lba, b);
 }
 
@@ -1057,17 +1121,17 @@ erc_t fat_read(struct fnode *n, U64 off, U8 *buf, U64 len, U64 *done)
 	return ErcOk;
 }
 
-/* Make the chain hold at least `bytes` (new clusters zeroed when zero is set). */
-static erc_t grow(struct fat *f, struct fnode *n, U64 bytes, bool zero)
+/* Make the chain hold at least `bytes` (new clusters zeroed when zero is set). *have: the clusters
+   in the chain afterwards, also when it fails (ErcDiskFull: every cluster it got is linked). */
+static erc_t grow(struct fat *f, struct fnode *n, U64 bytes, bool zero, U64 *have)
 {
-	U64 cs = (U64)f->spc * 512, need = (bytes + cs - 1) / cs, have = 0;
+	U64 cs = (U64)f->spc * 512, need = (bytes + cs - 1) / cs;
 	U32 c = n->first, next, last = 0;
 	erc_t erc;
 
-	if (!need)
-		return ErcOk;
-	while (valid_clus(f, c)) {
-		have++;
+	*have = 0;
+	while (valid_clus(f, c) && *have <= f->nclus) {
+		(*have)++;
 		last = c;
 		if ((erc = fat_get(f, c, &next)))
 			return erc;
@@ -1075,24 +1139,60 @@ static erc_t grow(struct fat *f, struct fnode *n, U64 bytes, bool zero)
 			break;
 		c = next;
 	}
-	while (have < need) {
+	while (*have < need) {
 		if ((erc = alloc_clus(f, last, &c, zero)))
 			return erc;
 		if (!n->first)
 			n->first = c;
 		last = c;
-		have++;
+		(*have)++;
 	}
 	return ErcOk;
 }
 
+/* Cut the chain to `keep` clusters, freeing the rest (nothing to do if it has no more). */
+static erc_t cut_chain(struct fat *f, struct fnode *n, U64 keep)
+{
+	U32 c, next;
+	erc_t erc;
+
+	if (!keep) {
+		if (n->first && (erc = free_chain(f, n->first)))
+			return erc;
+		n->first = 0;
+		return ErcOk;
+	}
+	if ((erc = chain_at(f, n->first, keep - 1, &c)) || (erc = fat_get(f, c, &next)))
+		return erc;
+	if (!valid_clus(f, next) || next >= eoc_min(f))
+		return ErcOk;				/* already ends there */
+	if ((erc = fat_put(f, c, eoc_val(f))))
+		return erc;
+	return free_chain(f, next);
+}
+
+/* n whole sectors at lba in one device command (one ATA write and one flush, not n of each) */
+static erc_t wr_n(struct fat *f, U64 lba, U32 cnt, const U8 *b)
+{
+	if (!f->dirty)
+		set_dirty(f, true);
+	return bc_write_n(f->dev, f->base + lba, cnt, b);
+}
+
+#define RUN_MAX 64				/* sectors per device command when writing */
+
+/* Write at off. Whole sectors at consecutive disk addresses go out together (wr_n), partial ones
+   through the cache. When the disk fills up: as much as the chain could get is written, the size
+   follows it, the clusters past the new size are freed again, and the result is ErcDiskFull with
+   *done = the bytes written. */
 erc_t fat_write(struct fnode *n, U64 off, const U8 *buf, U64 len, U64 *done)
 {
+	static U8 run[RUN_MAX * 512];		/* FILESYS is one task: static is fine */
 	struct fat *f = n->vol->fat;
-	U64 cs = (U64)f->spc * 512, pos;
-	U32 c;
+	U64 cs = (U64)f->spc * 512, pos, have, run_lba = 0;
+	U32 c, run_n = 0;
 	U8 sec[512];
-	erc_t erc;
+	erc_t erc, full;
 
 	*done = 0;
 	if (!len)
@@ -1101,9 +1201,14 @@ erc_t fat_write(struct fnode *n, U64 off, const U8 *buf, U64 len, U64 *done)
 		return ErcDiskFull;		/* FAT file size limit (4 GB - 1); ext4 lifts it (M8) */
 	if (off > n->size && (erc = fat_truncate(n, off)))	/* writing past the end: zero the gap */
 		return erc;
-	if ((erc = grow(f, n, off + len, false)))
-		return erc;
-	if ((erc = chain_at(f, n->first, off / cs, &c)))
+	full = grow(f, n, off + len, false, &have);
+	if (full && full != ErcDiskFull) {
+		cut_chain(f, n, (n->size + cs - 1) / cs);
+		return full;
+	}
+	if (full)				/* disk full: write what the chain holds */
+		len = have * cs > off ? (have * cs - off < len ? have * cs - off : len) : 0;
+	if (len && (erc = chain_at(f, n->first, off / cs, &c)))
 		return erc;
 	pos = off;
 	while (*done < len) {
@@ -1112,13 +1217,25 @@ erc_t fat_write(struct fnode *n, U64 off, const U8 *buf, U64 len, U64 *done)
 
 		if (k > len - *done)
 			k = (U32)(len - *done);
-		if (k < 512 && (erc = rd(f, lba, sec)))
-			return erc;
-		memcpy(sec + in_sec, buf + *done, k);
-		if (k < 512 && pos + k >= n->size && in_sec + k < 512 && pos + k > n->size)
-			memset(sec + in_sec + k, 0, 512 - in_sec - k);	/* no stale bytes past EOF */
-		if ((erc = wr(f, lba, sec)))
-			return erc;
+		if (k == 512) {				/* a whole sector: into the run */
+			if (run_n && (lba != run_lba + run_n || run_n == RUN_MAX)) {
+				if ((erc = wr_n(f, run_lba, run_n, run)))
+					return erc;
+				run_n = 0;
+			}
+			if (!run_n)
+				run_lba = lba;
+			memcpy(run + run_n * 512, buf + *done, 512);
+			run_n++;
+		} else {
+			if (k < 512 && (erc = rd(f, lba, sec)))
+				return erc;
+			memcpy(sec + in_sec, buf + *done, k);
+			if (pos + k >= n->size && in_sec + k < 512 && pos + k > n->size)
+				memset(sec + in_sec + k, 0, 512 - in_sec - k);	/* no stale bytes past EOF */
+			if ((erc = wr(f, lba, sec)))
+				return erc;
+		}
 		*done += k;
 		pos += k;
 		if (pos > n->size)
@@ -1126,7 +1243,12 @@ erc_t fat_write(struct fnode *n, U64 off, const U8 *buf, U64 len, U64 *done)
 		if (pos % cs == 0 && *done < len && (erc = chain_at(f, c, 1, &c)))
 			return erc;
 	}
-	return fat_update(n);
+	if (run_n && (erc = wr_n(f, run_lba, run_n, run)))
+		return erc;
+	if (full && (erc = cut_chain(f, n, (n->size + cs - 1) / cs)))
+		return erc;
+	erc = fat_update(n);
+	return full ? full : erc;
 }
 
 erc_t fat_truncate(struct fnode *n, U64 size)
@@ -1138,42 +1260,33 @@ erc_t fat_truncate(struct fnode *n, U64 size)
 	if (size > 0xFFFFFFFFUL)
 		return ErcDiskFull;
 	if (size < n->size) {
-		U64 keep = (size + cs - 1) / cs;
-		U32 c, next;
-
-		if (!keep) {
-			if ((erc = free_chain(f, n->first)))
-				return erc;
-			n->first = 0;
-		} else {
-			if ((erc = chain_at(f, n->first, keep - 1, &c)) || (erc = fat_get(f, c, &next)))
-				return erc;
-			if ((erc = fat_put(f, c, eoc_val(f))))
-				return erc;
-			if (valid_clus(f, next) && (erc = free_chain(f, next)))
-				return erc;
-		}
+		if ((erc = cut_chain(f, n, (size + cs - 1) / cs)))
+			return erc;
 		n->size = size;
 		return fat_update(n);
 	}
 	if (size > n->size) {			/* grow with zeros */
 		static const U8 z[512];
-		U64 pos = n->size, done;
+		U64 old = n->size, pos = old, have, done, end;
 
-		if ((erc = grow(f, n, size, true)))
+		if ((erc = grow(f, n, size, true, &have))) {	/* new clusters come zeroed */
+			cut_chain(f, n, (old + cs - 1) / cs);	/* disk full: give them back */
 			return erc;
-		while (pos < size) {
-			U64 k = size - pos < 512 - pos % 512 ? size - pos : 512 - pos % 512;
-			U64 old = n->size;
+		}
+		end = (old + cs - 1) / cs * cs;		/* only the old last cluster's tail is stale */
+		if (end > size)
+			end = size;
+		n->size = size;			/* let fat_write see the room */
+		while (pos < end) {
+			U64 k = end - pos < 512 - pos % 512 ? end - pos : 512 - pos % 512;
 
-			n->size = size;		/* let fat_write see the room */
 			if ((erc = fat_write(n, pos, z, k, &done))) {
 				n->size = old;
+				cut_chain(f, n, (old + cs - 1) / cs);
 				return erc;
 			}
 			pos += k;
 		}
-		n->size = size;
 		return fat_update(n);
 	}
 	return ErcOk;
@@ -1259,18 +1372,56 @@ static erc_t fat_readdir(struct fnode *dir, U32 index, struct dir_entry *out)
 	return x.found ? ErcOk : ErcNoMatch;
 }
 
+/* Free clusters, counted in the FAT (FSInfo's count isn't kept up to date: fsinfo_unknown). */
+static erc_t fat_space(struct volume *v, struct vol_space *out)
+{
+	struct fat *f = v->fat;
+	U32 c, val;
+	erc_t erc;
+
+	memset(out, 0, sizeof(*out));
+	out->unit = (U64)f->spc * 512;
+	out->total = f->nclus;
+	for (c = 2; c < f->nclus + 2; c++) {
+		if ((erc = fat_get(f, c, &val)))
+			return erc;
+		if (!val)
+			out->free++;
+	}
+	return ErcOk;
+}
+
+/* The modifying operations, each followed by the FAT sectors it queued (fat_flush). */
+static erc_t flushed(erc_t erc)
+{
+	erc_t e2 = fat_flush();
+
+	return erc ? erc : e2;
+}
+
+static erc_t fx_create(const char *p, U32 l, U8 a, struct fnode *n) { return flushed(fat_create(p, l, a, n)); }
+static erc_t fx_remove(struct fnode *n) { return flushed(fat_remove(n)); }
+static erc_t fx_rename(struct fnode *n, const char *p, U32 l) { return flushed(fat_rename(n, p, l)); }
+static erc_t fx_truncate(struct fnode *n, U64 size) { return flushed(fat_truncate(n, size)); }
+
+static erc_t fx_write(struct fnode *n, U64 off, const U8 *buf, U64 len, U64 *done)
+{
+	return flushed(fat_write(n, off, buf, len, done));
+}
+
 const struct fs_ops fat_ops = {
 	.name = "FAT",
 	.lookup = fat_lookup,
-	.create = fat_create,
-	.remove = fat_remove,
-	.rename = fat_rename,
+	.create = fx_create,
+	.remove = fx_remove,
+	.rename = fx_rename,
 	.read = fat_read,
-	.write = fat_write,
-	.truncate = fat_truncate,
+	.write = fx_write,
+	.truncate = fx_truncate,
 	.readdir = fat_readdir,
 	.dir_empty = fat_dir_empty,
 	.dir_sector = fat_dir_sector,
+	.space = fat_space,
 };
 
 /* ---- the check at mount (chkdsk), for a volume whose dirty flag was set ---- */
