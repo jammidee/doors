@@ -12,7 +12,8 @@ contain its own hash, so the newest row says *(this commit)* and the next commit
 
 | When | Version | Commit | Step | What changed | Devlog |
 |---|---|---|---|---|---|
-| 2026-10-19 | 1.9.0 | *(this commit)* | ROADMAP 2.1, 2.4, 2.5, 2.7 | Static analysis clean (3 real bugs fixed); stack protector, page poisoning, `kcheck`; panic stack traces; crash reports on disk; `make analyze`, `make crashtest`; CI workflow | [10-19](devlogs/2026-10-19.md) |
+| 2026-10-19 | 1.10.0 | *(this commit)* | ROADMAP 2.6 | Test coverage: `make coverage`, 81.3 % of kernel lines by `make test` | [10-19](devlogs/2026-10-19.md) |
+| 2026-10-19 | 1.9.0 | `514582e` | ROADMAP 2.1, 2.4, 2.5, 2.7 | Static analysis clean (3 real bugs fixed); stack protector, page poisoning, `kcheck`; panic stack traces; crash reports on disk; `make analyze`, `make crashtest`; CI workflow | [10-19](devlogs/2026-10-19.md) |
 | 2026-10-19 | 1.8.0 | `b4ccc24` | ROADMAP 1.7 (Stage 1 ✅) | Full volumes: clean `ErcDiskFull`, ext4 rollback of failed operations; FILESYS path-length security fix; faster FAT writes; `df`; `make fulltest` | [10-19](devlogs/2026-10-19.md) |
 | 2026-10-19 | 1.7.0 | `bb50bef` | ROADMAP 1.6 (M8b ✅) | Booting from an ext4 system disk (GRUB on the disk, no ISO); the CLI finds commands in any case; `make smoke` on both system disks | [10-19](devlogs/2026-10-19.md) |
 | 2026-10-19 | 1.6.0 | `a0d2159` | ROADMAP 1.5 | FAT after a power cut: dirty flag, chkdsk-style check at mount that matches `fsck.fat`, read-only when writing is unsafe; FAT power-cut runs. Also: this file, ROADMAP Stage 8 (networking) | [10-19](devlogs/2026-10-19.md) |

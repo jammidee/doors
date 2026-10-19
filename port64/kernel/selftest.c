@@ -2134,6 +2134,7 @@ void selftest_run(bool full)
 	test_full(full);
 	kcheck();
 	kprintf("2.4: kernel invariants ok (scheduler, messaging, page allocator), stack protector on\n");
+	cov_dump();			/* make coverage only (empty otherwise) */
 
 	ext4_unmount();				/* the disk is checked by tools/check_disk.py next */
 	fat_unmount();

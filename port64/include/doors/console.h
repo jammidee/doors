@@ -40,6 +40,7 @@ void crash_init(void);			/* after vol_init: show the last boot's crash report, o
 void crash_save(void);			/* from panic: the report to the disk's crash area */
 void crash_show(void);			/* the monitor's crash command */
 void crash_test(const char *cmdline);	/* "crash=NAME": trigger one aid on purpose (make crashtest) */
+void cov_dump(void);			/* coverage build (make coverage): print the covered blocks */
 
 /* Per-module invariant checks used by kcheck: NULL if fine, else what is wrong. */
 const char *sched_check(void);

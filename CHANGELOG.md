@@ -12,6 +12,15 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.10.0 — 2026-10-19 — test coverage
+- **`make coverage`:** `make test` with a second kernel whose basic blocks mark themselves
+  (`-fsanitize-coverage=trace-pc`, `kernel/cov.c`). `tools/coverage.py` turns that into line
+  coverage per file (`build/cov/coverage.txt`).
+- **First measurement:** 81.3 % of the kernel's 3,041 lines with code are run by `make test`
+  (the self-tests' own code not counted).
+- The normal kernel is unchanged: the hook only exists with `COV=1`.
+- CI runs it too and keeps the report.
+
 ## 1.9.0 — 2026-10-19 — Stage 2: analysis, debugging aids, crash reports, CI
 - **Static analysis** (`make analyze`): `gcc -fanalyzer`, `cppcheck` and `clang --analyze` over
   the kernel, clean.

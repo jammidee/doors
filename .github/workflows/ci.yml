@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [test, smoke, powercut, fuzz, analyze, crashtest]
+        target: [test, smoke, powercut, fuzz, analyze, crashtest, coverage]
     defaults:
       run:
         working-directory: port64
@@ -52,6 +52,13 @@ jobs:
             port64/build/fuzz/*.log
             port64/build/analyze/
             /tmp/doors-*.log
+          if-no-files-found: ignore
+      - name: Keep the coverage report
+        if: matrix.target == 'coverage'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: port64/build/cov/coverage.txt
           if-no-files-found: ignore
 
   long:

@@ -84,6 +84,8 @@ make powercut # kills QEMU during journaled ext4 writes (tools/powercut.py), che
 make analyze  # gcc -fanalyzer + cppcheck + clang --analyze over the kernel (tools/analyze.sh); intended findings
               #   go in tools/analyze.allow with a reason, false alarms get a cppcheck-suppress comment
 make crashtest # each debugging aid triggered on purpose (crash=NAME), then a boot that shows the saved report
+make coverage # make test with COV=1 (BUILD=build/cov, -fsanitize-coverage=trace-pc; kernel/cov.c is built without it),
+              #   then tools/coverage.py: line coverage per file in build/cov/coverage.txt
 make fulltest # make test + every volume filled to 100 % and freed (kernel cmdline "test full"); ~5 min.
               #   QEMU_TEST=script runs another QEMU for make test/fulltest (e.g. one adding -s, to gdb a hang;
               #   qemu_test.py logs to /tmp/doors-test-PID.log while it runs). KVM in WSL is slower (nested PIO).

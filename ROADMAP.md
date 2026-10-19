@@ -64,7 +64,7 @@ Other operating systems stay stable because every change is tested automatically
 | 2.3 | **Soak test**: a mixed random workload (CLIs, editor, services, file churn, job kills) for hours, with checks of resource counts | 72 h without a failure |
 | 2.4 | **Kernel debugging aids**: stack protector (`-fstack-protector-strong`), poisoned freed pages, assertions on all internal invariants, a panic report with a stack trace and the last kernel messages ✅ (1.9.0) | Each aid has a test that triggers it on purpose ✅ (`make crashtest`: 7 cases; `kcheck` covers the scheduler, messaging and page allocator, more modules can add checks) |
 | 2.5 | **Static analysis**: `gcc -fanalyzer`, `cppcheck` and `clang --analyze` clean in CI ✅ (1.9.0) | Zero warnings, kept at zero ✅ (`make analyze`; 1 intended finding on the allow list) |
-| 2.6 | **Coverage**: measure which kernel lines the tests run (gcov through QEMU) and add tests for the gaps | ≥ 80 % of kernel lines covered |
+| 2.6 | **Coverage**: measure which kernel lines the tests run (gcov through QEMU) and add tests for the gaps ✅ (1.10.0; `-fsanitize-coverage=trace-pc` instead of gcov) | ≥ 80 % of kernel lines covered ✅ (`make coverage`: 81.3 % by `make test` alone, test code not counted; smoke, powercut and crashtest runs not merged in yet) |
 | 2.7 | **Crash reports**: a panic writes its report to serial and to a reserved disk area; the next boot shows it ✅ (1.9.0) | A forced panic is readable after reboot ✅ (sectors 1984–2047 of the boot disk; `make crashtest`) |
 
 ## Stage 3: harden the kernel core (1.5 – 1.6)

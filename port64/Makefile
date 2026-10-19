@@ -32,6 +32,11 @@ CFLAGS   := -std=c11 -O2 -g -Wall -Wextra -Werror \
             -mno-red-zone -mcmodel=kernel -mgeneral-regs-only \
             -fno-asynchronous-unwind-tables -fno-omit-frame-pointer \
             -Iinclude -I$(BUILD)/gen -MMD -MP
+# COV=1 (make coverage, with BUILD=build/cov): every basic block calls kernel/cov.c's hook
+COV ?= 0
+ifeq ($(COV),1)
+CFLAGS   += -fsanitize-coverage=trace-pc -DDOORS_COVERAGE
+endif
 ASFLAGS  := -f elf64 -g -F dwarf
 LDFLAGS  := -n -nostdlib -T linker.ld -z max-page-size=0x1000
 
@@ -129,7 +134,7 @@ TEST_ARGS := \
 	--send "M9: type ed3=Edited in DOORS{alt-s}{alt-q}" \
 	--send "M9: type cli3=dir C:\T9\nexit\n"
 
-.PHONY: all run run-ext4 console test fulltest smoke powercut fuzz analyze crashtest debug clean FORCE
+.PHONY: all run run-ext4 console test fulltest smoke powercut fuzz analyze crashtest coverage debug clean FORCE
 # Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
 .SECONDARY:
 
@@ -300,6 +305,14 @@ $(BUILD)/doors-crash-%.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 	$(call mkiso,$@,crash=$*)
 crashtest: $(CRASH_ISOS) $(ISO) $(USER_ELFS)
 	python3 tools/crashtest.py
+
+# Test coverage (ROADMAP 2.6): make test with a kernel whose basic blocks record themselves
+# (kernel/cov.c, built without the instrumentation), then tools/coverage.py maps them to source
+# lines. Everything goes to build/cov, apart from the normal build.
+$(BUILD)/kernel/cov.o: CFLAGS := $(filter-out -fsanitize-coverage=trace-pc,$(CFLAGS))
+coverage:
+	$(MAKE) COV=1 BUILD=build/cov test
+	python3 tools/coverage.py build/cov/kernel.elf build/cov/serial.log build/cov/coverage.txt
 
 # Static analysis (ROADMAP 2.5): gcc -fanalyzer, cppcheck, clang --analyze; tools/analyze.allow
 # lists the intended findings

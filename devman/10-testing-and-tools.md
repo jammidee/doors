@@ -200,6 +200,15 @@ parallel, each to its own log in `build/fuzz/*.log`, and it ends with `FUZZ PASS
   with the right message and a stack trace through the right function. Boot 2 must show the saved
   report. Cases: `stack`, `uaf`, `double`, `assert`, `check`, `fault` (a kernel page fault),
   `panic`. About 2 minutes.
+- **`make coverage`** measures which kernel lines `make test` runs. It builds a second kernel
+  in `build/cov` (`COV=1`): with `-fsanitize-coverage=trace-pc`, every basic block calls a hook in
+  `kernel/cov.c`, which marks it in a bitmap. At the end of the self-tests the bitmap goes out on
+  the serial log. `tools/coverage.py` maps the blocks to source lines with `objdump` and
+  `addr2line`, and writes `build/cov/coverage.txt`: per file, the lines with code, those run and
+  those not run. The self-tests' own code is listed but not counted. 1.10.0: **81.3 %** of 3,041
+  lines. Most of the rest is the interactive monitor (`main.c`: `make smoke` drives it), the
+  power-cut writer (`powercut.c`: `make powercut`) and the panic paths (`debug.c`: `make
+  crashtest`); those runs aren't counted yet.
 - **`make analyze`** runs `gcc -fanalyzer`, `cppcheck` and `clang --analyze` over the kernel
   (`tools/analyze.sh`). Every finding fails it, except those in `tools/analyze.allow` (each with
   its reason). False alarms in the code are marked with a `cppcheck-suppress` comment there.
