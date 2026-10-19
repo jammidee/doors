@@ -8,6 +8,9 @@
 /* Set when the kernel command line contains "test" (make test). */
 extern bool test_mode;
 
+/* "1.9.0 v1.9.0-3-gabcdef": the version and build (kernel/main.c, the only user of version.h) */
+extern const char doors_build[];
+
 /* QEMU isa-debug-exit (only attached by `make test`): QEMU exits with status (code << 1) | 1. */
 #define QEMU_EXIT_PASS 0x10	/* status 33 */
 #define QEMU_EXIT_FAIL 0x11	/* status 35 */

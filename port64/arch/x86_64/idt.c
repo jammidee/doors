@@ -157,9 +157,13 @@ void isr_dispatch(struct regs *r)
 		job_fault(r, (U32)v);		/* does not return */
 	}
 	if (v < 32) {
+		U64 off;
+		const char *fn = ksym_lookup(r->rip, &off);
+
 		kprintf("\n*** CPU exception %lu: %s ***\n", v, exc_names[v]);
 		dump_regs(r);
-		panic("unhandled exception %lu (%s) at %016lx", v, exc_names[v], r->rip);
+		panic_regs = r;			/* the trace starts where it happened */
+		panic("unhandled exception %lu (%s) at %016lx in %s", v, exc_names[v], r->rip, fn ? fn : "?");
 	}
 	kprintf("DOORS: unexpected interrupt %lu\n", v);
 }

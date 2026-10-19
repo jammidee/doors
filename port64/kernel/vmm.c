@@ -180,6 +180,8 @@ void vmm_init(void)
 	wrmsr(MSR_EFER, rdmsr(MSR_EFER) | EFER_NXE);	/* honour PTE_NX */
 
 	kernel_space.pml4 = pmm_alloc();
+	if (!kernel_space.pml4)
+		panic("vmm: out of memory for the kernel PML4");
 	pml4 = table(kernel_space.pml4);
 
 	/* Create every kernel-half PDPT now so all address spaces can share PML4[256..511]. */
@@ -190,7 +192,8 @@ void vmm_init(void)
 	/* Direct map of all RAM with 2 MiB pages. */
 	for (pa = 0; pa < max; pa += 0x200000) {
 		U64 va = HHDM_BASE + pa;
-		U64 *pd = next(next(pml4, IDX(va, 3), true, false), IDX(va, 2), true, false);
+		U64 *pdpt = next(pml4, IDX(va, 3), true, false);
+		U64 *pd = pdpt ? next(pdpt, IDX(va, 2), true, false) : NULL;
 
 		if (!pd)
 			panic("vmm: out of memory for the direct map");

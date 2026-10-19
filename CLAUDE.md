@@ -81,9 +81,14 @@ make run-ext4 # boot build/sysdisk.img: GRUB on the disk, C: = ext4 system volum
 make smoke    # docs/SMOKE_TEST.md on 64-bit (tools/smoke64.py): types into the CLIs, reads the screen; runs twice,
               #   FAT32 C: from the ISO and ext4 C: from the disk (--ext4); ~3 min
 make powercut # kills QEMU during journaled ext4 writes (tools/powercut.py), checks Linux and DOORS replay; ~2 min
+make analyze  # gcc -fanalyzer + cppcheck + clang --analyze over the kernel (tools/analyze.sh); intended findings
+              #   go in tools/analyze.allow with a reason, false alarms get a cppcheck-suppress comment
+make crashtest # each debugging aid triggered on purpose (crash=NAME), then a boot that shows the saved report
 make fulltest # make test + every volume filled to 100 % and freed (kernel cmdline "test full"); ~5 min.
               #   QEMU_TEST=script runs another QEMU for make test/fulltest (e.g. one adding -s, to gdb a hang;
               #   qemu_test.py logs to /tmp/doors-test-PID.log while it runs). KVM in WSL is slower (nested PIO).
+              # The tests run ~3x faster from a clone on WSL's own filesystem (e.g. /root/...) than on /mnt/c:
+              #   QEMU's disk images on the Windows drive go through drvfs (make test 36 s vs ~120 s).
 make fuzz     # damaged FAT/ext4 disks against kernel/{vol,fat,ext4,bcache}.c built for Linux with ASan/UBSan and a
               #   12 KB guarded stack (tests/fsfuzz); ~4 min. A FAIL line prints its --replay command
 make test     # headless (tools/qemu_test.py); passes if the serial log has every --expect line in TEST_ARGS and the kernel
@@ -189,6 +194,13 @@ make debug    # QEMU waits for gdb on :1234
   `brd()`/`secrd()`, which see the transaction. A new modifying `fs_ops` entry must be wrapped in
   `tx_begin`/`tx_end` like `j_create`. Never write the superblock directly while mounted (the power-cut test
   tore it); `ext4_unmount()` clears needs_recovery. Run `make powercut` after touching any of this.
+- Debugging aids (`kernel/debug.c`, `include/doors/console.h`): use `ASSERT(cond)` for internal invariants; a
+  module with lists and counters adds a `*_check()` (returns NULL or what is wrong) to `kcheck()`. The kernel is
+  built with `-fstack-protector-strong -mstack-protector-guard=global` (`stack_guard_init` first in kmain); freed
+  pages are poisoned (`pmm_free`); panic prints a symbolized stack trace (two-pass link: `tools/gen_ksyms.sh`,
+  `build/gen/ksyms.c`) and saves the report to sectors 1984-2047 of the boot disk (`blkdev.panic_io`), shown at
+  the next boot. Kernel exceptions set `panic_regs` so the trace starts at the fault.
+- CI: `.github/workflows/ci.yml` (GitHub Actions). A new test target goes into its matrix.
 - ext4 operations are atomic: `tx_end_rb` rolls the transaction back (and `e->sb`) when an operation fails, unless
   it set `tx.clean_stop` (a write that ran out of data blocks between blocks: committed, partial). Data blocks are
   only given out above `DATA_RESERVE` free blocks. A new failure path inside an operation needs no cleanup code.

@@ -2,4 +2,4 @@
 # DOORS version, MAJOR.MINOR.PATCH. The first line that is not a comment is the version.
 # 0.M.P until the 64-bit port matches MMURTL (M9 = 1.0.0): M = milestone, P = changes within it.
 # Bump it in the commit that changes the system, add a CHANGELOG.md entry, and tag that commit vX.Y.Z.
-1.8.0
+1.9.0

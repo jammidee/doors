@@ -41,7 +41,8 @@ struct boot_info;
 void pmm_init(U64 mbi_phys, const struct boot_info *bi);
 U64  pmm_alloc(void);				/* one zeroed page, 0 if none */
 U64  pmm_alloc_contig(U64 n, U64 limit);	/* n contiguous zeroed pages below limit, 0 if none */
-void pmm_free(U64 phys);
+void pmm_free(U64 phys);			/* fills the page with PMM_POISON; a double free panics */
+void pmm_test_corrupt(void);			/* crash=check only: break the free counter on purpose */
 void pmm_remap(void);				/* called by vmm_init() after switching CR3 */
 U64  pmm_free_pages(void);
 U64  pmm_total_pages(void);

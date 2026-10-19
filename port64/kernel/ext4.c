@@ -1923,13 +1923,11 @@ static erc_t dx_add(struct ext4 *e, U32 dino, U8 *draw, const char *name, U32 nl
 			put16(b_dx1 + DX_NODE_COUNT, dx_limit(e, DX_NODE_COUNT));
 			put16(b_dx0 + DX_ROOT_COUNT + 2, 1);
 			put32(b_dx0 + DX_ROOT_COUNT + 4, nl);
-			b_dx0[0x1E] = 1;
-			levels = 1;
+			b_dx0[0x1E] = 1;		/* two levels now; the new node is root entry 0 */
 			nb = b_dx1;
 			noff = DX_NODE_COUNT;
 			npblk = np;
 			node = nl;
-			i0 = 0;
 		} else {
 			/* node full: split it; its upper half goes into a new node after it in the root */
 			U32 half2, sh;

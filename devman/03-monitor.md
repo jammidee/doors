@@ -39,6 +39,8 @@ log (`build/serial-run.log` with `doors.bat`) gets every program's text.
 | `sync` | marks the ext4 volumes clean (their journals are empty) and clears the dirty flag of the FAT volumes DOORS wrote: do it before switching off. The next write marks them in use again. A FAT volume that was already dirty when DOORS mounted it stays dirty, for a repair tool |
 | `vols` | the volumes: letter, disk, partition, size, type and label |
 | `df` | each volume's size, free space and allocation unit, and on ext4 the free inodes (asks FILESYS: `GetVolSpace`) |
+| `check` | walks the kernel's structures (scheduler, messaging, page allocator) and panics if one doesn't match its counters (`kcheck`) |
+| `crash` | shows the last crash report saved on the boot disk (a boot after a panic shows it once by itself) |
 | `dir C:\PATH` | lists a directory on any volume (FAT or ext4): date and time, `<DIR>`, size, name |
 | `type C:\FILE` | prints a file |
 | `int3` | raises a breakpoint exception. It is handled and the monitor continues |

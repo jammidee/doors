@@ -169,6 +169,8 @@ erc_t fat_mount(struct volume *v)
 static U32 eoc_min(struct fat *f) { return f->type == 12 ? 0xFF8 : f->type == 16 ? 0xFFF8 : 0x0FFFFFF8; }
 static U32 eoc_val(struct fat *f) { return f->type == 12 ? 0xFFF : f->type == 16 ? 0xFFFF : 0x0FFFFFFF; }
 static bool valid_clus(struct fat *f, U32 c) { return c >= 2 && c < f->nclus + 2; }
+/* bytes per cluster (spc is never 0 on a mounted volume: fat_bpb_ok; the guard is for analyzers) */
+static U64 clus_bytes(struct fat *f) { return f->spc ? (U64)f->spc * 512 : 512; }
 static U64 clus_lba(struct fat *f, U32 c) { return f->data_lba + (U64)(c - 2) * f->spc; }
 
 /* FAT sectors changed by the running operation wait here and go to the disk once each, in the
@@ -421,7 +423,7 @@ static erc_t chain_at(struct fat *f, U32 c, U64 index, U32 *out)
 
 static erc_t dir_loc(struct fat *f, U32 dclus, U32 idx, U64 *lba, U32 *off, bool extend)
 {
-	U32 per = f->spc * 16, n, c = dclus, next;
+	U32 per = (U32)(clus_bytes(f) / 32), n, c = dclus, next;	/* entries per cluster */
 	erc_t erc;
 
 	if (!dclus) {
@@ -684,6 +686,7 @@ static bool find_fn(void *c, const char *ln, U32 ll, const char *sn, U32 sl, con
 
 static erc_t dir_find(struct fat *f, U32 dclus, const char *name, U32 nlen, struct fnode *nd)
 {
+	/* cppcheck-suppress ctuuninitvar ; nd is only written (by find_fn), and read on ErcOk */
 	struct find_ctx x = { name, nlen, nd, false };
 	erc_t erc = dir_walk(f, dclus, true, find_fn, &x);
 
@@ -1091,7 +1094,7 @@ erc_t fat_update(struct fnode *n)
 erc_t fat_read(struct fnode *n, U64 off, U8 *buf, U64 len, U64 *done)
 {
 	struct fat *f = n->vol->fat;
-	U64 cs = (U64)f->spc * 512, pos;
+	U64 cs = clus_bytes(f), pos;
 	U32 c;
 	U8 sec[512];
 	erc_t erc;
@@ -1125,7 +1128,7 @@ erc_t fat_read(struct fnode *n, U64 off, U8 *buf, U64 len, U64 *done)
    in the chain afterwards, also when it fails (ErcDiskFull: every cluster it got is linked). */
 static erc_t grow(struct fat *f, struct fnode *n, U64 bytes, bool zero, U64 *have)
 {
-	U64 cs = (U64)f->spc * 512, need = (bytes + cs - 1) / cs;
+	U64 cs = clus_bytes(f), need = (bytes + cs - 1) / cs;
 	U32 c = n->first, next, last = 0;
 	erc_t erc;
 
@@ -1189,7 +1192,7 @@ erc_t fat_write(struct fnode *n, U64 off, const U8 *buf, U64 len, U64 *done)
 {
 	static U8 run[RUN_MAX * 512];		/* FILESYS is one task: static is fine */
 	struct fat *f = n->vol->fat;
-	U64 cs = (U64)f->spc * 512, pos, have, run_lba = 0;
+	U64 cs = clus_bytes(f), pos, have, run_lba = 0;
 	U32 c, run_n = 0;
 	U8 sec[512];
 	erc_t erc, full;
@@ -1254,7 +1257,7 @@ erc_t fat_write(struct fnode *n, U64 off, const U8 *buf, U64 len, U64 *done)
 erc_t fat_truncate(struct fnode *n, U64 size)
 {
 	struct fat *f = n->vol->fat;
-	U64 cs = (U64)f->spc * 512;
+	U64 cs = clus_bytes(f);
 	erc_t erc;
 
 	if (size > 0xFFFFFFFFUL)
@@ -1380,7 +1383,7 @@ static erc_t fat_space(struct volume *v, struct vol_space *out)
 	erc_t erc;
 
 	memset(out, 0, sizeof(*out));
-	out->unit = (U64)f->spc * 512;
+	out->unit = clus_bytes(f);
 	out->total = f->nclus;
 	for (c = 2; c < f->nclus + 2; c++) {
 		if ((erc = fat_get(f, c, &val)))
@@ -1492,7 +1495,7 @@ static void chk_own_rest(struct fat *f, U32 c)
 static bool chk_chain(const char *path, U32 first, U64 size, bool dir)
 {
 	struct fat *f = chk.f;
-	U64 cs = (U64)f->spc * 512, clusters = 0;
+	U64 cs = clus_bytes(f), clusters = 0;
 	U32 c = first, v;
 
 	while (valid_clus(f, c) && clusters <= f->nclus) {

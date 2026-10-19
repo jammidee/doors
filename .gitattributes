@@ -8,3 +8,4 @@ port64/**   text=auto eol=lf
 port64/**/*.img  binary
 port64/**/*.iso  binary
 tools/**    text=auto eol=lf
+.github/**  text eol=lf

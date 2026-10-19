@@ -175,13 +175,48 @@ parallel, each to its own log in `build/fuzz/*.log`, and it ends with `FUZZ PASS
 
 - **Serial log:** every kernel message goes to COM1 as well as the screen. `make run` shows it in
   the terminal; `make console` writes it to `build/serial-run.log`.
-- **Kernel panics** print the reason. CPU exceptions in the kernel print a full register dump.
+- **Kernel panics** print a report:
+  - **the reason;** CPU exceptions in the kernel also print a full register dump and the function
+    they happened in;
+  - **a stack trace** with function names (`kmain+0x219`). The kernel keeps frame pointers, and
+    the build links in a table of its functions: a second link with `build/gen/ksyms.c`, made by
+    `tools/gen_ksyms.sh`. The build checks that this moves no code.
+  - **the crash area:** the report is also saved on the boot disk, with the kernel messages
+    before it (the console keeps the last 16 KB). It goes to sectors 1984–2047, in the gap
+    before the first partition, if the first partition starts at 2048 or later. GRUB's core on
+    a system disk ends far below. The next boot prints the report once (`*** Crash report of an
+    earlier boot ...`), and the monitor's `crash` shows it again.
+- **Checks built into the kernel:**
+  - **stack protector:** `-fstack-protector-strong`, with a canary set at boot. A buffer that runs
+    over its function's frame panics with "stack smashing detected in FUNCTION".
+  - **freed-page poison:** freed pages are filled with a pattern. A page written after it was
+    freed panics when it is handed out again, and freed pages are handed out first. Freeing a page
+    twice panics.
+  - **`ASSERT(...)`** for internal invariants, and **`kcheck()`**, which walks the scheduler's ready
+    queues, the messaging free lists and exchange queues, and the page bitmap against their
+    counters. The self-tests run it after each group (`2.4: kernel invariants ok`), and so does
+    the monitor's `check`.
+- **`make crashtest`** triggers each of these on purpose. Boot 1, with `crash=NAME`, must panic
+  with the right message and a stack trace through the right function. Boot 2 must show the saved
+  report. Cases: `stack`, `uaf`, `double`, `assert`, `check`, `fault` (a kernel page fault),
+  `panic`. About 2 minutes.
+- **`make analyze`** runs `gcc -fanalyzer`, `cppcheck` and `clang --analyze` over the kernel
+  (`tools/analyze.sh`). Every finding fails it, except those in `tools/analyze.allow` (each with
+  its reason). False alarms in the code are marked with a `cppcheck-suppress` comment there.
 - **gdb:** `make debug`, then in another terminal:
   `gdb build/kernel.elf -ex 'target remote :1234'`. The kernel is built with `-g`.
 - **QEMU monitor:** add `QEMU_EXTRA="-monitor unix:/tmp/doors.mon,server,nowait"` to look at
   registers, memory and the screen from outside (`info registers`, `x/16gx ADDR`).
 - **Leaks:** the M5/M6 tests compare the free counts of pages, exchanges, link blocks and request
   blocks before and after running jobs. The monitor's `tasks` command shows the same counts.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` builds DOORS on GitHub Actions (Ubuntu 22.04) for every push and pull
+request. It runs `make test`, `smoke`, `powercut`, `fuzz` (500 images per disk), `analyze` and
+`crashtest` as parallel jobs, and keeps the logs of a failed job. Weekly, and on demand, it also
+runs `make fulltest`, a 20,000-image fuzz and 50 power cuts. To let only passing commits into
+`main`, require these checks in the repository's branch protection rules.
 
 ## Versions and the changelog
 

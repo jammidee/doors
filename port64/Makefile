@@ -13,6 +13,7 @@
 #   make test       boot headless (tools/qemu_test.py); pass if the serial log shows every
 #                   TEST_MARKS string and the kernel exits QEMU through isa-debug-exit
 #   make fulltest   make test plus every volume filled to 100 % and freed (ROADMAP 1.7); ~5 min
+#   make analyze    static analysis of the kernel: gcc -fanalyzer, cppcheck, clang --analyze (tools/analyze.sh)
 #   make debug      like run, but QEMU waits for gdb on :1234 (gdb build/kernel.elf -ex 'target remote :1234')
 #   make clean
 #
@@ -26,7 +27,8 @@ LD       := ld
 QEMU     := qemu-system-x86_64
 
 CFLAGS   := -std=c11 -O2 -g -Wall -Wextra -Werror \
-            -ffreestanding -fno-stack-protector -fno-pic -fno-pie -fno-builtin \
+            -ffreestanding -fstack-protector-strong -mstack-protector-guard=global \
+            -fno-pic -fno-pie -fno-builtin \
             -mno-red-zone -mcmodel=kernel -mgeneral-regs-only \
             -fno-asynchronous-unwind-tables -fno-omit-frame-pointer \
             -Iinclude -I$(BUILD)/gen -MMD -MP
@@ -115,6 +117,7 @@ TEST_ARGS := \
 	--expect "NUMBERS Service gave out number: 1." \
 	--expect "M9: samples ok" \
 	--expect "1.7: edge cases ok" \
+	--expect "2.4: kernel invariants ok" \
 	--send "M2: type doors=doors\n" \
 	--send "M5: type msg=msg\n" \
 	--send "M9: type kbd=kQ{f1}{up}\n" \
@@ -126,7 +129,7 @@ TEST_ARGS := \
 	--send "M9: type ed3=Edited in DOORS{alt-s}{alt-q}" \
 	--send "M9: type cli3=dir C:\T9\nexit\n"
 
-.PHONY: all run run-ext4 console test fulltest smoke powercut fuzz debug clean FORCE
+.PHONY: all run run-ext4 console test fulltest smoke powercut fuzz analyze crashtest debug clean FORCE
 # Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
 .SECONDARY:
 
@@ -158,8 +161,25 @@ $(BUILD)/kernel/main.o: $(VERSION_H)
 
 FORCE:
 
-$(KERNEL): $(OBJS) linker.ld
-	$(LD) $(LDFLAGS) $(OBJS) -o $@
+# Two links: the first (empty function table) gives the addresses, tools/gen_ksyms.sh turns them
+# into build/gen/ksyms.c, the second links that table in (into .rodata: no function moves; the
+# last line checks it) for the stack traces of kernel/debug.c.
+KSYMS0 := $(BUILD)/gen/ksyms0.o
+KSYMS  := $(BUILD)/gen/ksyms.o
+$(BUILD)/gen/ksyms0.c: tools/gen_ksyms.sh
+	@mkdir -p $(@D)
+	sh tools/gen_ksyms.sh < /dev/null > $@
+$(BUILD)/kernel0.elf: $(OBJS) $(KSYMS0) linker.ld
+	$(LD) $(LDFLAGS) $(OBJS) $(KSYMS0) -o $@
+$(BUILD)/gen/ksyms.c: $(BUILD)/kernel0.elf tools/gen_ksyms.sh
+	nm -n --defined-only $< | sh tools/gen_ksyms.sh > $@
+$(BUILD)/gen/%.o: $(BUILD)/gen/%.c
+	$(CC) $(CFLAGS) -c $< -o $@
+$(KERNEL): $(OBJS) $(KSYMS) linker.ld
+	$(LD) $(LDFLAGS) $(OBJS) $(KSYMS) -o $@
+	@nm -n --defined-only $(BUILD)/kernel0.elf | awk '$$2 ~ /^[tT]$$/' > $(BUILD)/gen/text0.txt
+	@nm -n --defined-only $@ | awk '$$2 ~ /^[tT]$$/' | cmp -s - $(BUILD)/gen/text0.txt || \
+		{ echo "ksyms: the function table moved code; stack traces would be wrong"; rm -f $@; exit 1; }
 
 # ---- user programs (port64/user): static ELF64 at 0x40000000, loaded as GRUB boot modules ----
 USER_CFLAGS := -std=c11 -O2 -g -Wall -Wextra -Werror -ffreestanding -fno-stack-protector \
@@ -271,6 +291,20 @@ fulltest: $(FULLTEST_ISO) $(USER_ELFS)
 	python3 tools/qemu_test.py --qemu $(QEMU_TEST) --iso $(FULLTEST_ISO) --disk $(TEST_DISK) --disk2 $(TEST_DISK2) \
 		--log $(BUILD)/serial.log --timeout 600 $(TEST_ARGS) --expect "1.7: full volumes ok"
 	python3 tools/check_disk.py $(TEST_DISK) $(TEST_DISK2) --log $(BUILD)/serial.log
+
+# Debugging aids and crash reports, each triggered on purpose (ROADMAP 2.4, 2.7): a kernel with
+# "crash=NAME" per case (kernel/debug.c crash_test), then a normal boot that must show the report
+CRASH_TESTS := stack uaf double assert check fault panic
+CRASH_ISOS  := $(CRASH_TESTS:%=$(BUILD)/doors-crash-%.iso)
+$(BUILD)/doors-crash-%.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
+	$(call mkiso,$@,crash=$*)
+crashtest: $(CRASH_ISOS) $(ISO) $(USER_ELFS)
+	python3 tools/crashtest.py
+
+# Static analysis (ROADMAP 2.5): gcc -fanalyzer, cppcheck, clang --analyze; tools/analyze.allow
+# lists the intended findings
+analyze: $(VERSION_H)
+	sh tools/analyze.sh
 
 # Kill QEMU in the middle of journaled ext4 writes, then check the disk with Linux and DOORS
 powercut: $(PC_ISOS) $(USER_ELFS)

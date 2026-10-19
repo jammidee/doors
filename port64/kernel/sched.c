@@ -36,6 +36,7 @@ extern U8 kernel_stack_guard[], kernel_stack_top[];
 
 static void rdy_push(struct task *t)
 {
+	ASSERT(t != idle && rdyq[t->priority].tail != t);	/* the idle task, or pushed twice */
 	t->state = TASK_READY;
 	t->next = NULL;
 	if (rdyq[t->priority].tail)
@@ -44,6 +45,36 @@ static void rdy_push(struct task *t)
 		rdyq[t->priority].head = t;
 	rdyq[t->priority].tail = t;
 	st.ready++;
+}
+
+/* kcheck (interrupts off): every queued task is READY, at its own priority's queue, each queue's
+   tail is its last task, the count matches, and the running task is not queued. */
+const char *sched_check(void)
+{
+	U32 p, n = 0;
+
+	for (p = 0; p < nPRI; p++) {
+		struct task *t, *last = NULL;
+
+		for (t = rdyq[p].head; t; t = t->next) {
+			if (t->state != TASK_READY)
+				return "sched: a task in a ready queue is not READY";
+			if (t->priority != p)
+				return "sched: a task is in another priority's ready queue";
+			if (t == current)
+				return "sched: the running task is in a ready queue";
+			if (++n > MAX_TASKS)
+				return "sched: a ready queue has a loop";
+			last = t;
+		}
+		if (rdyq[p].tail != last)
+			return "sched: a ready queue's tail is not its last task";
+	}
+	if (n != st.ready)
+		return "sched: the ready count doesn't match the queues";
+	if (current && current->state != TASK_RUNNING)
+		return "sched: the current task is not RUNNING";
+	return NULL;
 }
 
 static struct task *rdy_peek(void)
@@ -131,7 +162,8 @@ static void maybe_preempt(bool slice)
 	if (!n)
 		return;
 	if (current == idle) {
-		switch_task(rdy_pop());
+		if ((n = rdy_pop()))		/* (non-NULL: rdy_peek found it) */
+			switch_task(n);
 		return;
 	}
 	if (n->priority < current->priority ||
@@ -140,7 +172,8 @@ static void maybe_preempt(bool slice)
 		if (slice)
 			st.slices++;
 		rdy_push(current);
-		switch_task(rdy_pop());
+		if ((n = rdy_pop()))		/* (non-NULL: current was just pushed) */
+			switch_task(n);
 	}
 }
 

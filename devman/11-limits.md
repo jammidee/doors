@@ -32,6 +32,8 @@
 
 | Area | State | Planned |
 |---|---|---|
+| Crash reports on disk | only when the boot disk's first partition starts at sector 2048 or later (the crash area is 1984–2047); otherwise screen and COM1 only. A panic during a disk transfer resets the channel first, but a drive that never answers keeps the report off the disk | — |
+| System-call fuzzer, soak test, coverage | not yet (ROADMAP 2.2, 2.3, 2.6) | Stage 2 |
 | DumbTerm, Print, ScrnPrnt, Beeper samples; CM32 and DASM | not ported (need the serial and parallel ports, or are 32-bit tools) | M10 |
 | `malloc` and `free` | not yet: use `AllocPage` | M9 or later |
 | Redirection of stdin/stdout to files (`SetSysIn`/`SetSysOut`) | the names are stored, nothing is redirected | later |

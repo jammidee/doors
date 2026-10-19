@@ -1,0 +1,90 @@
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
+# Continuous integration (ROADMAP 2.1): every push and pull request builds DOORS 64-bit and runs
+# the test targets in parallel, on Ubuntu 22.04 (the same system as the WSL the tests are made
+# on). Once a week the long runs too (make fulltest, a longer fuzz). The logs of a failed job are
+# kept as an artifact. To keep `main` green, require these checks in the branch protection rules
+# (GitHub: Settings > Branches).
+name: CI
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "17 3 * * 1"          # Mondays 03:17 UTC: the long runs
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: make ${{ matrix.target }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [test, smoke, powercut, fuzz, analyze, crashtest]
+    defaults:
+      run:
+        working-directory: port64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0              # git describe needs the tags (version.h)
+      - name: Install the tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential nasm binutils grub-pc-bin grub-common \
+            xorriso mtools qemu-system-x86 python3 e2fsprogs dosfstools cppcheck clang
+      - name: Build
+        run: make
+      - name: make ${{ matrix.target }}
+        run: |
+          case "${{ matrix.target }}" in
+            fuzz) make fuzz FUZZ_N=500 ;;
+            *)    make ${{ matrix.target }} ;;
+          esac
+      - name: Keep the logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.target }}
+          path: |
+            port64/build/serial*.log
+            port64/build/fuzz/*.log
+            port64/build/analyze/
+            /tmp/doors-*.log
+          if-no-files-found: ignore
+
+  long:
+    name: weekly long runs
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: port64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install the tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential nasm binutils grub-pc-bin grub-common \
+            xorriso mtools qemu-system-x86 python3 e2fsprogs dosfstools
+      - name: make fulltest
+        run: make && make fulltest
+      - name: make fuzz (long)
+        run: make fuzz FUZZ_N=20000
+      - name: make powercut (more runs)
+        run: make build/doors-pc.iso build/doors-pcstop.iso build/doors-pccheck.iso
+          build/doors-pcfat.iso build/doors-pcfatcheck.iso && python3 tools/powercut.py --runs 20 --fat-runs 30
+      - name: Keep the logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-long
+          path: |
+            port64/build/serial*.log
+            port64/build/fuzz/*.log
+            /tmp/doors-*.log
+          if-no-files-found: ignore

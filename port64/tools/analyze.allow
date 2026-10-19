@@ -1,0 +1,4 @@
+# DOORS OS - Copyright (c) 2026 Joel Damaso <jammidee@gmail.com>, Philippines.
+# Static analysis findings that are intended (tools/analyze.sh). One per line:
+#   FILE CHECKER REASON
+kernel/main.c core.DivideZero the monitor's "div0" command divides by zero on purpose (tests the #DE handler)

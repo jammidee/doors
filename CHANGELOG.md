@@ -12,6 +12,30 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.9.0 — 2026-10-19 — Stage 2: analysis, debugging aids, crash reports, CI
+- **Static analysis** (`make analyze`): `gcc -fanalyzer`, `cppcheck` and `clang --analyze` over
+  the kernel, clean.
+  - Found and fixed: the ATA disk name filled all 24 bytes with no NUL, so every print of it read
+    past the field.
+  - Also: an unchecked out-of-memory case while building the boot page tables, and a string copy
+    that read a byte before checking the bound.
+  - False alarms were made explicit in the code; one intended finding (the monitor's `div0`) is on
+    an allow list.
+- **Debugging aids:**
+  - the kernel is built with `-fstack-protector-strong`, with a canary set at boot;
+  - freed pages are poisoned, and a use after free panics when the page is handed out again;
+  - `ASSERT` and `kcheck()` check the scheduler, messaging and page allocator structures (the
+    self-tests run it; monitor `check`).
+- **Panic reports:** a stack trace with function names (the kernel now carries a table of its
+  functions), and for kernel exceptions the function they happened in.
+- **Crash reports:** a panic saves its report and the kernel messages before it to the boot disk
+  (sectors 1984–2047). The next boot shows it once, and the monitor's `crash` shows it again.
+- **`make crashtest`:** each aid triggered on purpose (smashed stack, use after free, double free,
+  assertion, broken invariant, kernel page fault, panic), and the report must come back after a
+  reboot.
+- **CI:** `.github/workflows/ci.yml` runs test, smoke, powercut, fuzz, analyze and crashtest on
+  every push, plus weekly long runs. It runs once the repository is on GitHub.
+
 ## 1.8.0 — 2026-10-19 — full volumes, empty files, the longest names
 - **Security fix in FILESYS:** a path with a drive letter was copied into a 260-byte static buffer
   without a length check. A longer one ran into the next kernel variable (FILESYS's own exchange)

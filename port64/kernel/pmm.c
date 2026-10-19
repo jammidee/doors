@@ -134,12 +134,32 @@ static U64 search(U64 from, U64 to, U64 n)
 	return (U64)-1;
 }
 
+/* A freed page is filled with this; when it is handed out again it must still be all poison,
+   or something wrote to it after it was freed (a use after free). Pages never freed are not
+   poisoned (their first word differs) and aren't checked. */
+#define PMM_POISON 0xF8EEDF8EEDF8EEDFULL
+
+static void check_poison(U64 pg)
+{
+	const U64 *w = phys_to_virt(pg * PAGE_SIZE);
+	U64 i;
+
+	if (w[0] != PMM_POISON)
+		return;
+	for (i = 1; i < PAGE_SIZE / 8; i++)
+		if (w[i] != PMM_POISON)
+			panic("pmm: page %lx was written after it was freed (use after free: byte %lu)",
+			      pg * PAGE_SIZE, i * 8);
+}
+
 static U64 take(U64 first, U64 n)
 {
 	U64 i;
 
-	for (i = 0; i < n; i++)
+	for (i = 0; i < n; i++) {
+		check_poison(first + i);
 		set_used(first + i);
+	}
 	nfree -= n;
 	memset(phys_to_virt(first * PAGE_SIZE), 0, n * PAGE_SIZE);
 	return first * PAGE_SIZE;
@@ -178,9 +198,31 @@ static void pmm_free_nolock(U64 phys)
 {
 	U64 pg = phys / PAGE_SIZE;
 
+	U64 *w, i;
+
 	if (pg >= npages || !used(pg))
-		panic("pmm_free: page %lx is not allocated", phys);
+		panic("pmm_free: page %lx is not allocated (a double free?)", phys);
+	w = phys_to_virt(pg * PAGE_SIZE);
+	for (i = 0; i < PAGE_SIZE / 8; i++)
+		w[i] = PMM_POISON;
 	set_free(pg);
+	nfree++;
+	if (pg >= DMA_LIMIT / PAGE_SIZE && pg < hint)
+		hint = pg;			/* hand it out next: a use after free shows up soon */
+}
+
+/* kcheck: the free counter must match the bitmap */
+const char *pmm_check(void)
+{
+	U64 pg, n = 0;
+
+	for (pg = 0; pg < npages; pg++)
+		n += !used(pg);
+	return n == nfree ? NULL : "pmm: the free page count doesn't match the page bitmap";
+}
+
+void pmm_test_corrupt(void)
+{
 	nfree++;
 }
 

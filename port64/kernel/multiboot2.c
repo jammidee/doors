@@ -9,7 +9,7 @@ static void copy(char *dst, U32 size, const char *src)
 {
 	U32 n = 0;
 
-	while (src[n] && n < size - 1) {
+	while (n < size - 1 && src[n]) {
 		dst[n] = src[n];
 		n++;
 	}

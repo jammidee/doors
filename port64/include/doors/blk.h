@@ -23,6 +23,8 @@ struct blkdev {
 	U64 nblocks;			/* 512-byte blocks */
 	erc_t (*io)(struct blkdev *d, U32 op, U64 lba, U32 n, U8 *buf);
 	void *priv;
+	/* for panic (crash reports): no locks, no timer, interrupts off; NULL if the driver can't */
+	erc_t (*panic_io)(struct blkdev *d, U32 op, U64 lba, U32 n, U8 *buf);
 };
 
 /* What DeviceStat returns (DOORS layout; MMURTL's was per driver). */

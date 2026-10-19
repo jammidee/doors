@@ -59,13 +59,13 @@ Other operating systems stay stable because every change is tested automatically
 
 | Step | What | Done when |
 |---|---|---|
-| 2.1 | **Continuous integration**: `make test`, `make smoke`, `make powercut` on every push (GitHub Actions, QEMU) | Every commit shows pass/fail; `main` only gets passing commits |
+| 2.1 | **Continuous integration**: `make test`, `make smoke`, `make powercut` on every push (GitHub Actions, QEMU) ◐ (1.9.0: `.github/workflows/ci.yml` written, its steps pass in a clean checkout; it runs once the repository is on GitHub) | Every commit shows pass/fail; `main` only gets passing commits (branch protection, a GitHub setting) |
 | 2.2 | **System-call fuzzer**: a ring-3 program calling all 111 calls with random, edge-case and hostile arguments | 24 h of fuzzing with no panic, hang or leak (free-page count returns to baseline) |
 | 2.3 | **Soak test**: a mixed random workload (CLIs, editor, services, file churn, job kills) for hours, with checks of resource counts | 72 h without a failure |
-| 2.4 | **Kernel debugging aids**: stack protector (`-fstack-protector-strong`), poisoned freed pages, assertions on all internal invariants, a panic report with a stack trace and the last kernel messages | Each aid has a test that triggers it on purpose |
-| 2.5 | **Static analysis**: `gcc -fanalyzer`, `cppcheck` and `clang --analyze` clean in CI | Zero warnings, kept at zero |
+| 2.4 | **Kernel debugging aids**: stack protector (`-fstack-protector-strong`), poisoned freed pages, assertions on all internal invariants, a panic report with a stack trace and the last kernel messages ✅ (1.9.0) | Each aid has a test that triggers it on purpose ✅ (`make crashtest`: 7 cases; `kcheck` covers the scheduler, messaging and page allocator, more modules can add checks) |
+| 2.5 | **Static analysis**: `gcc -fanalyzer`, `cppcheck` and `clang --analyze` clean in CI ✅ (1.9.0) | Zero warnings, kept at zero ✅ (`make analyze`; 1 intended finding on the allow list) |
 | 2.6 | **Coverage**: measure which kernel lines the tests run (gcov through QEMU) and add tests for the gaps | ≥ 80 % of kernel lines covered |
-| 2.7 | **Crash reports**: a panic writes its report to serial and to a reserved disk area; the next boot shows it | A forced panic is readable after reboot |
+| 2.7 | **Crash reports**: a panic writes its report to serial and to a reserved disk area; the next boot shows it ✅ (1.9.0) | A forced panic is readable after reboot ✅ (sectors 1984–2047 of the boot disk; `make crashtest`) |
 
 ## Stage 3: harden the kernel core (1.5 – 1.6)
 

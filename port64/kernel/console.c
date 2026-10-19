@@ -8,10 +8,27 @@
 #include <doors/kernel.h>
 #include <doors/x86.h>
 
+/* The last kernel messages, for the panic report and the crash area (kernel/debug.c). */
+#define RING 16384
+static char ring[RING];
+static U64 ring_pos;				/* characters written so far */
+
 void console_putc(char c)
 {
 	serial_putc(c);
 	vid_kputc(c);
+	ring[ring_pos++ % RING] = c;
+}
+
+U64 console_ring(char *out, U64 max)
+{
+	U64 n = ring_pos < RING ? ring_pos : RING, i;
+
+	if (n > max)
+		n = max;
+	for (i = 0; i < n; i++)
+		out[i] = ring[(ring_pos - n + i) % RING];
+	return n;
 }
 
 void console_write(const char *s)
@@ -195,11 +212,25 @@ void console_write_n(const char *s, U64 n)
 	irq_restore(f);
 }
 
+/* The panic report: the message, a stack trace with function names, then the report (with the
+   kernel messages before it, from the ring) goes to the disk's crash area for the next boot. */
 void panic(const char *fmt, ...)
 {
+	static bool panicking;
 	va_list ap;
 
 	cli();
+	if (panicking) {			/* a panic inside the panic report: stop at once */
+		console_write("\nDOORS PANIC while reporting a panic: ");
+		va_start(ap, fmt);
+		vkprintf(fmt, ap);
+		va_end(ap);
+		console_write("\n");
+		if (test_mode)
+			qemu_exit(QEMU_EXIT_FAIL);
+		halt_forever();
+	}
+	panicking = true;
 	vid_force_owner(1);			/* the panic must be seen, whatever job is on screen */
 	vid_kattr((RED << 4) | WHITE);
 	console_write("\nDOORS PANIC: ");
@@ -207,6 +238,8 @@ void panic(const char *fmt, ...)
 	vkprintf(fmt, ap);
 	va_end(ap);
 	console_write("\n");
+	panic_trace((U64)(uintptr_t)__builtin_frame_address(0));
+	crash_save();
 	if (test_mode)
 		qemu_exit(QEMU_EXIT_FAIL);	/* end `make test` now instead of at its timeout */
 	halt_forever();

@@ -92,9 +92,58 @@ static struct lb *lb_alloc(void)
 
 static void lb_free(struct lb *lb)
 {
+	ASSERT(lb >= lbs && lb < lbs + nLB);	/* not a link block of the pool */
 	lb->next = free_lb;
 	free_lb = lb;
 	n_lb_free++;
+}
+
+/* kcheck (interrupts off): the free lists and counters agree; every exchange queues messages or
+   waiting tasks, never both, and each queue's tail is its last element. */
+const char *msg_check(void)
+{
+	struct lb *lb;
+	U32 n = 0, e, inuse = 0;
+
+	if (!up)
+		return NULL;
+	for (lb = free_lb; lb; lb = lb->next)
+		if (++n > nLB)
+			return "msg: the free link block list has a loop";
+	if (n != n_lb_free)
+		return "msg: the free link block count doesn't match the free list";
+	for (e = 0; e < nEXCH; e++) {
+		struct exch *x = &ex[e];
+		struct lb *last = NULL;
+		struct task *t, *tlast = NULL;
+		U32 k = 0;
+
+		if (!x->inuse) {
+			if (x->mhead || x->thead)
+				return "msg: a free exchange has a queue";
+			continue;
+		}
+		inuse++;
+		if (x->mhead && x->thead)
+			return "msg: an exchange queues both messages and waiting tasks";
+		for (lb = x->mhead; lb; lb = lb->next) {
+			if (lb < lbs || lb >= lbs + nLB || ++k > nLB)
+				return "msg: an exchange's message queue is broken";
+			last = lb;
+		}
+		if (x->mtail != last)
+			return "msg: an exchange's message tail is not its last message";
+		for (t = x->thead, k = 0; t; t = t->next) {
+			if (++k > MAX_TASKS)
+				return "msg: an exchange's waiting-task queue has a loop";
+			tlast = t;
+		}
+		if (x->ttail != tlast)
+			return "msg: an exchange's waiting-task tail is not its last task";
+	}
+	if (nEXCH - inuse != n_exch_free)
+		return "msg: the free exchange count doesn't match the exchanges";
+	return NULL;
 }
 
 static struct exch *get_exch(U32 e, erc_t *erc)

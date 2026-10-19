@@ -68,10 +68,12 @@ static void delay400(struct channel *c)
 		inb(c->ctrl);		/* each alternate-status read takes ~100 ns */
 }
 
+static bool panicking;		/* ata_panic_io: interrupts are off, the timer doesn't tick */
+
 /* Wait until BSY is clear, then for `want` bits (DRQ) unless the drive reports an error. */
 static erc_t wait_t(struct channel *c, U8 want, U64 timeout)
 {
-	U64 end = timer_ticks() + timeout;
+	U64 end = timer_ticks() + timeout, spins = 0;
 	U8 st;
 
 	for (;;) {
@@ -82,7 +84,7 @@ static erc_t wait_t(struct channel *c, U8 want, U64 timeout)
 			if ((st & want) == want)
 				return ErcOk;
 		}
-		if (timer_ticks() > end)
+		if (panicking ? ++spins > timeout * 100000 : timer_ticks() > end)
 			return ErcDevTimeOut;
 	}
 }
@@ -152,6 +154,24 @@ static erc_t xfer(struct ata *a, U32 op, U64 lba, U32 n, U8 *buf)
 	return ErcOk;
 }
 
+/* From panic (a crash report): no lock (the panic may have stopped a task holding it), the waits
+   counted in loops, and a software reset first in case a transfer was cut off in the middle. */
+static erc_t ata_panic_io(struct blkdev *d, U32 op, U64 lba, U32 n, U8 *buf)
+{
+	struct ata *a = d->priv;
+	struct channel *c = a->ch;
+	U32 i;
+
+	panicking = true;
+	outb(c->ctrl, 0x06);			/* SRST + nIEN */
+	for (i = 0; i < 50; i++)
+		delay400(c);
+	outb(c->ctrl, 0x02);			/* nIEN: polled, as always */
+	for (i = 0; i < 200; i++)
+		delay400(c);
+	return op == CmdWrite || op == CmdRead ? xfer(a, op, lba, n, buf) : ErcBadOpNum;
+}
+
 static erc_t ata_io(struct blkdev *d, U32 op, U64 lba, U32 n, U8 *buf)
 {
 	struct ata *a = d->priv;
@@ -186,7 +206,7 @@ static erc_t ata_io(struct blkdev *d, U32 op, U64 lba, U32 n, U8 *buf)
 static void identify(struct ata *a)
 {
 	struct channel *c = a->ch;
-	U16 id[256];
+	U16 id[256] = { 0 };			/* (filled by rep insw, which analyzers can't see) */
 	U32 cnt = 256;
 	U16 *w = id;
 	U8 st;
@@ -222,15 +242,17 @@ static void identify(struct ata *a)
 	if (!a->dev.nblocks)
 		return;
 
-	for (i = 0; i < 20; i++) {		/* model string: words 27-46, byte-swapped */
+	/* model string: words 27-46, byte-swapped; as much as fits, with room for the NUL (the old
+	   loop checked after writing and filled all 24 bytes: found by cppcheck) */
+	memset(a->dev.name, 0, sizeof(a->dev.name));
+	for (i = 0; i < (int)(sizeof(a->dev.name) - 1) / 2; i++) {	/* 11 words, 22 characters */
 		a->dev.name[2 * i] = (char)(id[27 + i] >> 8);
 		a->dev.name[2 * i + 1] = (char)id[27 + i];
-		if (2 * i + 2 >= (int)sizeof(a->dev.name) - 1)
-			break;
 	}
 	for (i = (int)sizeof(a->dev.name) - 2; i >= 0 && (a->dev.name[i] == ' ' || !a->dev.name[i]); i--)
 		a->dev.name[i] = 0;
 	a->dev.io = ata_io;
+	a->dev.panic_io = ata_panic_io;
 	a->dev.priv = a;
 	if (blk_register(&a->dev) == ErcOk)
 		kprintf("Disk %u: ATA %s %s, %lu MB%s ('%s')\n", a->dev.devnum,

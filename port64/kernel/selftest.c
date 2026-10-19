@@ -2107,12 +2107,14 @@ void selftest_run(bool full)
 	test_kbd_messages();
 	test_request();
 	test_cross_job();
+	kcheck();			/* 2.4: the kernel's structures agree after each group */
 
 	test_user_hello();
 	test_user_badptr();
 	test_user_fpu();
 	test_user_service();
 	test_killjob();
+	kcheck();
 
 	test_disk();
 	test_fat_read();
@@ -2130,6 +2132,8 @@ void selftest_run(bool full)
 	test_cli();
 	test_samples();
 	test_full(full);
+	kcheck();
+	kprintf("2.4: kernel invariants ok (scheduler, messaging, page allocator), stack protector on\n");
 
 	ext4_unmount();				/* the disk is checked by tools/check_disk.py next */
 	fat_unmount();

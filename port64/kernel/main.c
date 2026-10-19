@@ -21,6 +21,7 @@
 #define TICK_HZ        100	/* 10 ms, as MMURTL */
 
 bool test_mode;
+const char doors_build[] = DOORS_VERSION " " DOORS_COMMIT;
 
 extern U8 _kernel_start[], _kernel_end[];	/* linker.ld */
 
@@ -53,7 +54,7 @@ static void read_boot_info(U64 mbi_phys)
 	kprintf("Loader:  %s   Cmdline: %s\n", boot_info.loader, boot_info.cmdline);
 	kprintf("Memory:  %lu MB usable (%u map entries)\n", boot_info.mem_usable >> 20, boot_info.mmap_count);
 	kprintf("Kernel:  %p - %p (%lu KB)\n", _kernel_start, _kernel_end,
-		(U64)(_kernel_end - _kernel_start) >> 10);
+		((U64)(uintptr_t)_kernel_end - (U64)(uintptr_t)_kernel_start) >> 10);	/* linker symbols */
 	kprintf("CPU:     long mode %s, CR0=%lx CR3=%lx CR4=%lx EFER=%lx\n",
 		(efer & (1 << 10)) ? "active" : "INACTIVE", read_cr0(), read_cr3(), read_cr4(), efer);
 	if (!(efer & (1 << 10)))
@@ -116,6 +117,7 @@ static void cmd(const char *line)
 			"div0   divide error (register dump + panic)\n"
 			"screen N  show job N's screen (SetVidOwner)\n"
 			"sync   mark the ext4 and FAT volumes clean before switching off\n"
+			"check  check the kernel's structures;  crash  the last crash report\n"
 			"Keys: F1 load the CLI, F2 jobs, F3 stats, Ctrl-Alt-PgDn next screen,\n"
 			"      Ctrl-Alt-Del kill the job on screen\n");
 	} else if (!strncmp(line, "screen ", 7)) {
@@ -125,6 +127,11 @@ static void cmd(const char *line)
 		while (*q >= '0' && *q <= '9')
 			j = j * 10 + (U32)(*q++ - '0');
 		kprintf("SetVidOwner(%u): %u\n", j, SetVidOwner(j));
+	} else if (!strcmp(line, "check")) {
+		kcheck();
+		kprintf("kernel invariants ok (scheduler, messaging, page allocator)\n");
+	} else if (!strcmp(line, "crash")) {
+		crash_show();
 	} else if (!strcmp(line, "df")) {
 		struct volume *v;
 		U32 i;
@@ -265,6 +272,7 @@ static void cmd(const char *line)
 		*(volatile U64 *)0xdead0000ULL = 1;
 	} else if (!strcmp(line, "div0")) {
 		volatile U32 zero = 0;
+		/* cppcheck-suppress zerodiv ; on purpose: the monitor's "div0" command tests the #DE handler */
 		kprintf("%u\n", 1 / zero);
 	} else {
 		kprintf("unknown command '%s' (try help)\n", line);
@@ -345,6 +353,7 @@ static NORETURN void interactive(void)
 
 void kmain(U32 magic, U64 mbi_phys)
 {
+	stack_guard_init();	/* first: kmain never returns, so no frame keeps the old canary */
 	serial_init();
 	vid_init();
 	banner();
@@ -374,9 +383,11 @@ void kmain(U32 magic, U64 mbi_phys)
 	bc_init();
 	ata_init();
 	vol_init();
+	crash_init();		/* the last boot's panic report, if one is on the disk */
 	fsys_init();
 	vid_clock_base(unix_time());	/* the status line clock counts from here */
 
+	crash_test(boot_info.cmdline);	/* crash=NAME: make crashtest */
 	if (test_mode)
 		selftest_run(cmdline_has(boot_info.cmdline, "full"));	/* make fulltest: "test full" */
 	if (cmdline_has(boot_info.cmdline, "powercut"))		/* tools/powercut.py */
