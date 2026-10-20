@@ -7,8 +7,10 @@
 #include <doors/cpu.h>
 #include <doors/blk.h>
 #include <doors/fs.h>
+#include <doors/gtable.h>
 #include <doors/job.h>
 #include <doors/kernel.h>
+#include <doors/kheap.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
 #include <doors/multiboot2.h>
@@ -118,6 +120,7 @@ static void cmd(const char *line)
 			"screen N  show job N's screen (SetVidOwner)\n"
 			"sync   mark the ext4 and FAT volumes clean before switching off\n"
 			"check  check the kernel's structures;  crash  the last crash report\n"
+			"tables kernel tables (entries, ceiling, memory) and the kernel heap\n"
 			"Keys: F1 load the CLI, F2 jobs, F3 stats, Ctrl-Alt-PgDn next screen,\n"
 			"      Ctrl-Alt-Del kill the job on screen\n");
 	} else if (!strncmp(line, "screen ", 7)) {
@@ -130,6 +133,12 @@ static void cmd(const char *line)
 	} else if (!strcmp(line, "check")) {
 		kcheck();
 		kprintf("kernel invariants ok (scheduler, messaging, page allocator)\n");
+	} else if (!strcmp(line, "tables")) {
+		U64 b, p;
+
+		gt_report();
+		kheap_stats(&b, &p);
+		kprintf("kernel heap: %lu blocks in use, %lu pages\n", b, p);
 	} else if (!strcmp(line, "crash")) {
 		crash_show();
 	} else if (!strcmp(line, "df")) {
@@ -181,7 +190,7 @@ static void cmd(const char *line)
 		U32 i;
 
 		kprintf("Task  Job  Pri  State     CPU ticks  Name\n");
-		for (i = 0; i < MAX_TASKS; i++) {
+		for (i = 0; i < task_limit(); i++) {
 			const struct task *t = task_by_index(i);
 
 			if (t)
@@ -238,7 +247,7 @@ static void cmd(const char *line)
 	} else if (!strcmp(line, "jobs")) {
 		U32 j;
 
-		for (j = 1; j < MAX_JOBS; j++) {
+		for (j = 1; j < job_limit(); j++) {
 			const struct job *jb = job_get(j);
 
 			if (!jb)

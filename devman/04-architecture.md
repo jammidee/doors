@@ -89,7 +89,8 @@ A **job** is a running program: an address space, its tasks, exchanges, register
 open files (`kernel/job.c`).
 
 - Job 1 is the OS and monitor. Job 2 is reserved for the debugger, as in MMURTL. Programs start at
-  job 3. Up to 64 jobs exist at a time.
+  job 3. The job table grows as needed (up to 4,096 jobs); a new job takes the number of one that
+  ended, once its tasks are gone, before the table grows.
 - `LoadNewJob(name)` loads a **static ELF64** program. A name without `:` or `\` is first looked up
   among the boot modules (`hello`), then as a file relative to the caller's path. A path is loaded
   from a volume (`C:\BIN\HELLO.ELF`). Segments are mapped with their own

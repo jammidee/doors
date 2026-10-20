@@ -61,7 +61,7 @@ static U32 alive_jobs(void)
 {
 	U32 j, n = 0;
 
-	for (j = FIRST_USER_JOB; j < MAX_JOBS; j++)
+	for (j = FIRST_USER_JOB; j < job_limit(); j++)
 		n += job_get(j) && job_get(j)->alive;
 	return n;
 }
@@ -71,7 +71,7 @@ static void stop_all(void)
 {
 	U32 j, t;
 
-	for (j = FIRST_USER_JOB; j < MAX_JOBS; j++)
+	for (j = FIRST_USER_JOB; j < job_limit(); j++)
 		if (job_get(j) && job_get(j)->alive)
 			KillJob(j);
 	for (t = 0; t < 500 && alive_jobs(); t++)
@@ -141,7 +141,7 @@ NORETURN void soak_run(const char *cmdline)
 			}
 		}
 		Sleep(50 + rnd() % 250);
-		for (j = FIRST_USER_JOB; j < MAX_JOBS; j++)
+		for (j = FIRST_USER_JOB; j < job_limit(); j++)
 			if (job_get(j) && job_get(j)->alive && rnd() % 2) {
 				KillJob(j);
 				killed++;

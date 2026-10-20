@@ -11,6 +11,8 @@
 #define MB2_TAG_CMDLINE      1
 #define MB2_TAG_LOADER_NAME  2
 #define MB2_TAG_MODULE       3
+
+#define MAX_BOOT_MODS 64		/* boot modules kept (programs + INITIAL.JOB); more are reported */
 #define MB2_TAG_BASIC_MEMINFO 4
 #define MB2_TAG_MMAP         6
 
@@ -75,7 +77,7 @@ struct boot_info {
 		U64 start, end;		/* physical, [start, end) */
 		char name[32];		/* first word of the module string */
 		char args[64];		/* the rest (the program's command line) */
-	} mods[16];
+	} mods[MAX_BOOT_MODS];
 };
 
 extern struct boot_info boot_info;	/* filled by mb2_parse */

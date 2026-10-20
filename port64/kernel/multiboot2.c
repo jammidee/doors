@@ -69,8 +69,10 @@ void mb2_parse(U64 mbi_phys, struct boot_info *bi, bool print)
 			const char *s = m->string;
 			U32 n = 0;
 
-			if (bi->nmods >= 16)
+			if (bi->nmods >= MAX_BOOT_MODS) {
+				kprintf("boot: more than %u modules; '%s' left out\n", MAX_BOOT_MODS, m->string);
 				break;
+			}
 			bm = &bi->mods[bi->nmods++];
 			bm->start = m->mod_start;
 			bm->end = m->mod_end;

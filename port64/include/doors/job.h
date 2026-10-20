@@ -11,7 +11,7 @@
 #include <doors/erc.h>
 #include <doors/types.h>
 
-#define MAX_JOBS     64
+#define MAX_JOBS     4096		/* ceiling of the growable job tables; loops go to job_limit() */
 #define FIRST_USER_JOB 3
 #define ErcBadRunFile 74		/* not a run file (here: not a valid ELF64 program) */
 #define ErcCpuFault   1000		/* DOORS: job ended by CPU exception n -> 1000 + n */
@@ -25,6 +25,7 @@ struct regs;
 struct job {
 	bool used;
 	bool alive;
+	bool ended;			/* job_end ran: the number can be reused once its tasks are reaped */
 	erc_t exit_erc;			/* why it ended (ExitJob code, or ErcCpuFault + vector) */
 	char name[16];
 	char cmdline[80];
@@ -37,6 +38,8 @@ struct job {
 
 void job_init(void);
 const struct job *job_get(U32 job);
+U32  job_limit(void);				/* job numbers that exist now (0 .. job_limit()-1) */
+bool job_grow(U32 want);			/* make room for job numbers below want */
 void job_load_initial(void);			/* INITIAL.JOB module: start the programs it lists */
 erc_t job_set_cmdline(U32 job, const char *cmd);	/* another job's (kernel/soak.c) */
 NORETURN void job_fault(struct regs *r, U32 vector);	/* user-mode CPU exception */

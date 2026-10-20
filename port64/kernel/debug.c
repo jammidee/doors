@@ -6,7 +6,7 @@
    - Stack traces with function names: the frame-pointer chain (the kernel keeps frame pointers),
      names from a table the build links in (tools/gen_ksyms.sh, a second link of the kernel).
    - kcheck(): every module that keeps lists and counters checks that they agree (sched_check,
-     msg_check, pmm_check). The monitor's `check` and the self-tests run it.
+     msg_check, pmm_check, kheap_check). The monitor's `check` and the self-tests run it.
    - Crash reports: panic writes its report (the kernel messages before it, the message and the
      trace, all from the console's ring) to a crash area on the boot disk: sectors 1984-2047, in
      the gap before the first partition, when that gap is free (the first partition starts at
@@ -19,6 +19,7 @@
 #include <doors/cpu.h>
 #include <doors/fs.h>
 #include <doors/kernel.h>
+#include <doors/kheap.h>
 #include <doors/mem.h>
 #include <doors/string.h>
 #include <doors/x86.h>
@@ -117,7 +118,7 @@ void panic_trace(U64 rbp)
 
 void kcheck(void)
 {
-	const char *(*const checks[])(void) = { sched_check, msg_check, pmm_check };
+	const char *(*const checks[])(void) = { sched_check, msg_check, pmm_check, kheap_check };
 	U64 f = irq_save();
 	U32 i;
 

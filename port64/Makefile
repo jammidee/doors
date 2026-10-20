@@ -93,6 +93,8 @@ TEST_ARGS := \
 	--expect "M6: KillJob ok" \
 	--expect "M6: no leaks" \
 	--expect "DOORS: M6 OK" \
+	--expect "3.1: kernel heap ok" \
+	--expect "3.1: 1000 jobs at once ok" \
 	--expect "M7: disk ok" \
 	--expect "M7: FAT read ok" \
 	--expect "M7: FAT write ok" \

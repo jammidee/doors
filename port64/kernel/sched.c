@@ -9,6 +9,7 @@
 
 #include <doors/console.h>
 #include <doors/cpu.h>
+#include <doors/gtable.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
 #include <doors/string.h>
@@ -21,7 +22,11 @@ struct task *current;
 U64 syscall_kstack;			/* kernel stack top of the running task (syscall.asm) */
 static U8 fpu_initial[512] __attribute__((aligned(16)));
 
-static struct task tasks[MAX_TASKS];
+/* Tasks live in a growable table (ROADMAP 3.1); entry i owns kernel stack slot i. */
+static struct gtable gt_tasks;
+#define tasks ((struct task *)(void *)gt_tasks.base)
+#define FIRST_TASKS 256
+_Static_assert(sizeof(struct task) % 16 == 0, "task entries must keep fpu 16-byte aligned");
 static struct task *idle;
 static struct { struct task *head, *tail; } rdyq[nPRI];
 static struct task *zombies;
@@ -260,15 +265,15 @@ static struct task *alloc_task(const char *name, void (*entry)(void *), void *ar
 	U64 va, *sp;
 	unsigned i;
 
-	for (i = 1; i < MAX_TASKS; i++) {	/* slot 0 is the boot task */
+	for (i = 1; ; i++) {			/* slot 0 is the boot task */
+		if (i == gt_tasks.n && !gt_grow(&gt_tasks, gt_tasks.n + 64)) {
+			*erc = ErcNoMoreTSSs;	/* the ceiling, or no memory for the table */
+			return NULL;
+		}
 		if (tasks[i].state == TASK_FREE) {
 			t = &tasks[i];
 			break;
 		}
-	}
-	if (!t) {
-		*erc = ErcNoMoreTSSs;
-		return NULL;
 	}
 	memset(t, 0, sizeof(*t));
 	memcpy(t->fpu, fpu_initial, sizeof(fpu_initial));
@@ -360,9 +365,11 @@ static void fpu_init(void)
 
 void sched_init(void)
 {
-	struct task *boot = &tasks[0];
+	struct task *boot;
 	erc_t erc;
 
+	gt_init(&gt_tasks, "tasks", GT_TASKS, sizeof(struct task), MAX_TASKS, FIRST_TASKS, 0);
+	boot = &tasks[0];
 	boot->tid = 1;
 	boot->job = 1;
 	boot->priority = 20;
@@ -387,7 +394,7 @@ U32 task_count(void)
 {
 	U32 n = 0, i;
 
-	for (i = 0; i < MAX_TASKS; i++)
+	for (i = 0; i < gt_tasks.n; i++)
 		if (tasks[i].state != TASK_FREE && tasks[i].state != TASK_DEAD)
 			n++;
 	return n;
@@ -463,7 +470,7 @@ void sched_kill_job(U32 job)
 {
 	U32 i;
 
-	for (i = 1; i < MAX_TASKS; i++) {
+	for (i = 1; i < gt_tasks.n; i++) {
 		struct task *t = &tasks[i];
 
 		if (t == current || t->job != job || t == idle)
@@ -487,16 +494,35 @@ U32 job_task_count(U32 job)
 {
 	U32 i, n = 0;
 
-	for (i = 0; i < MAX_TASKS; i++)
+	for (i = 0; i < gt_tasks.n; i++)
 		if (tasks[i].job == job && tasks[i].state != TASK_FREE && tasks[i].state != TASK_DEAD &&
 		    &tasks[i] != idle)
 			n++;
 	return n;
 }
 
+/* Any task of the job left, including ones that ended and are not reaped yet (the zombies are
+   reaped first: the caller is running, so it is not one of them). Interrupts off. */
+bool job_has_tasks(U32 job)
+{
+	U32 i;
+
+	ASSERT(current->state != TASK_DEAD);
+	reap();
+	for (i = 0; i < gt_tasks.n; i++)
+		if (tasks[i].job == job && tasks[i].state != TASK_FREE && &tasks[i] != idle)
+			return true;
+	return false;
+}
+
+U32 task_limit(void)
+{
+	return gt_tasks.n;
+}
+
 const struct task *task_by_index(U32 i)
 {
-	return i < MAX_TASKS && tasks[i].state != TASK_FREE ? &tasks[i] : NULL;
+	return i < gt_tasks.n && tasks[i].state != TASK_FREE ? &tasks[i] : NULL;
 }
 
 /* ---- MMURTL calls ---- */

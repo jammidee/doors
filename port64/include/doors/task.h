@@ -19,7 +19,7 @@
 #include <doors/x86.h>
 
 #define nPRI            32
-#define MAX_TASKS       256
+#define MAX_TASKS       65536	/* ceiling of the growable task table (kernel/sched.c) */
 #define TIME_SLICE      3		/* ticks (30 ms), as TMRCODE.ASM */
 #define DEFAULT_PRIORITY 25		/* MMURTL's default for user tasks (BUSYLOOP.C) */
 
@@ -68,8 +68,10 @@ struct task *task_create_user(const char *name, U32 job, U64 rip, U64 rsp, U8 pr
 			      erc_t *erc);
 void sched_kill_job(U32 job);		/* interrupts off; all of job's tasks but the caller */
 U32  job_task_count(U32 job);
+bool job_has_tasks(U32 job);			/* also ended tasks not reaped yet */
 extern U64 syscall_kstack;
 const struct task *task_by_index(U32 i);	/* NULL for a free slot */
+U32 task_limit(void);				/* task slots that exist (the table grows) */
 
 struct sched_stats {
 	U64 switches;		/* all task switches (MMURTL _nSwitches) */

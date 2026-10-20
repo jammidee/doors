@@ -38,6 +38,8 @@ void vid_clock_base(U32 unix_time);	/* RTC time at boot, so the IRQ never reads 
 void vid_kputc(char c);			/* kernel console character on job 1's screen */
 void vid_kattr(U8 attr);		/* attribute for kernel console text (panic: white on red) */
 void vid_job_new(U32 job);		/* blank screen for a new job */
+void vid_jobs_init(U32 first, U32 max);	/* the growable screen table (job.c job_init) */
+bool vid_grow(U32 want);
 void vid_job_gone(U32 job);		/* the video owner ended: show job 1 again */
 void vid_force_owner(U32 job);		/* panic: show job 1 no matter what */
 U32  vid_owner(void);
@@ -46,6 +48,8 @@ void vid_next_owner(void);		/* Ctrl-Alt-PgDn */
 void kbd_init(void);			/* hardware: IRQ 1 */
 void kbd_service_start(void);		/* the keyboard task: delivers keys to the video owner */
 void kbd_job_new(U32 job);
+void kbd_jobs_init(U32 first, U32 max);	/* the growable key-buffer table (job.c job_init) */
+bool kbd_grow(U32 want);
 void kbd_job_gone(U32 job);
 /* Test hooks from M2/M5: plain ASCII ('\n' for Enter) to an exchange, or a polling buffer. They are
    used before the keyboard service runs (kbd_set_exch(0) turns the exchange hook off). */

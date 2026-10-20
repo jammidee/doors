@@ -15,13 +15,14 @@
 
 #include <doors/console.h>
 #include <doors/fs.h>
+#include <doors/gtable.h>
 #include <doors/job.h>
 #include <doors/msg.h>
 #include <doors/string.h>
 #include <doors/task.h>
 #include <doors/x86.h>
 
-#define nFILES 128
+#define nFILES 65536			/* open files, ceiling of the growable table (ROADMAP 3.1) */
 
 enum { FS_OPEN = 1, FS_CLOSE, FS_CREATE, FS_DELETE, FS_RENAME, FS_MKDIR, FS_RMDIR, FS_READB,
        FS_WRITEB, FS_READBLK, FS_WRITEBLK, FS_GETSIZE, FS_SETSIZE, FS_GETLFA, FS_SETLFA,
@@ -43,7 +44,8 @@ struct ofile {
 	U8 mode, stream;
 };
 
-static struct ofile files[nFILES];
+static struct gtable gt_files;
+#define files ((struct ofile *)(void *)gt_files.base)
 static U32 fs_exch;
 
 static bool same(const struct fnode *a, const struct fnode *b)
@@ -54,7 +56,7 @@ static bool same(const struct fnode *a, const struct fnode *b)
 /* Handles are 1..nFILES (slot + 1): MMURTL programs and the CM32 library use 0 for "no file". */
 static struct ofile *handle(U32 h, U32 job)
 {
-	return h >= 1 && h <= nFILES && files[h - 1].used && files[h - 1].job == job ? &files[h - 1] : NULL;
+	return h >= 1 && h <= gt_files.n && files[h - 1].used && files[h - 1].job == job ? &files[h - 1] : NULL;
 }
 
 static bool is_open(const struct fnode *n, bool *modifier)
@@ -63,7 +65,7 @@ static bool is_open(const struct fnode *n, bool *modifier)
 	bool any = false;
 
 	*modifier = false;
-	for (i = 0; i < nFILES; i++)
+	for (i = 0; i < gt_files.n; i++)
 		if (files[i].used && same(&files[i].n, n)) {
 			any = true;
 			if (files[i].mode == ModeModify)
@@ -100,11 +102,11 @@ static erc_t do_open(struct RqBlk *r, struct fs_req *q, struct volume *v, const 
 		return ErcReadOnly;
 	if (is_open(&n, &modifier) && (q->mode == ModeModify || modifier))
 		return ErcFileInUse;
-	for (i = 0; i < nFILES; i++)
+	for (i = 0; i < gt_files.n; i++)
 		if (!files[i].used)
 			break;
-	if (i == nFILES)
-		return ErcNoFreeFCB;
+	if (i == gt_files.n && !gt_grow(&gt_files, gt_files.n + 64))
+		return ErcNoFreeFCB;		/* the ceiling, or no memory for the table */
 	files[i].used = true;
 	files[i].job = r->RqOwnerJob;
 	files[i].n = n;
@@ -343,6 +345,7 @@ void fsys_init(void)
 {
 	erc_t erc;
 
+	gt_init(&gt_files, "open files", GT_FILES, sizeof(struct ofile), nFILES, 128, 0);
 	if (exch_alloc_job(1, &fs_exch) || RegisterSvc("FILESYS ", fs_exch) ||
 	    !task_create("filesys", fsys_task, NULL, 5, 1, &erc))
 		panic("FILESYS service did not start");
@@ -353,7 +356,7 @@ void fsys_job_gone(U32 job)
 {
 	U32 i;
 
-	for (i = 0; i < nFILES; i++)
+	for (i = 0; i < gt_files.n; i++)
 		if (files[i].used && files[i].job == job)
 			files[i].used = false;
 }
@@ -362,7 +365,7 @@ U32 fsys_open_count(void)
 {
 	U32 i, n = 0;
 
-	for (i = 0; i < nFILES; i++)
+	for (i = 0; i < gt_files.n; i++)
 		n += files[i].used;
 	return n;
 }

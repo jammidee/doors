@@ -5,18 +5,18 @@
 
 | Item | Limit | Defined in |
 |---|---|---|
-| jobs | 64 (programs from job 3) | `include/doors/job.h` |
-| tasks | 256 | `include/doors/task.h` |
+| jobs | grows as needed, up to 4,096 (programs from job 3; an ended job's number is reused) | `include/doors/job.h` |
+| tasks | grows as needed, up to 65,536 | `include/doors/task.h` |
 | priorities | 32 (0 = highest; user default 25) | `include/doors/task.h` |
 | time slice | 3 ticks = 30 ms | `include/doors/task.h` |
-| exchanges | 1024 | `include/doors/msg.h` |
-| link blocks (queued messages) | 4096 | `include/doors/msg.h` |
-| request blocks | 256 | `include/doors/msg.h` |
+| exchanges | grows as needed, up to 65,536 | `include/doors/msg.h` |
+| link blocks (queued messages) | grows as needed, up to 1,048,576 | `include/doors/msg.h` |
+| request blocks | grows as needed, up to 65,536 | `include/doors/msg.h` |
 | named services | 64 | `include/doors/msg.h` |
 | pending timers | 64 | `include/doors/msg.h` |
 | kernel stack per task | 16 KB + guard page | `kernel/sched.c` |
 | user stack (first task) | 64 KB + guard page | `include/doors/mem.h` |
-| open files (whole system) | 128 | `kernel/fsys.c` |
+| open files (whole system) | grows as needed, up to 65,536 | `kernel/fsys.c` |
 | volumes | 8 (`make test` uses 7: C:–F: and the second disk's G:–I:) | `include/doors/fs.h` |
 | path length | 259 characters, checked by FILESYS for every request | `include/doors/fs.h` |
 | name length | 255 characters | `include/doors/dirent.h` |
@@ -27,6 +27,11 @@
 | disks | ATA devices 12–15 | `drivers/ata.c` |
 | CPUs | 1 | |
 | monitor input line | 63 characters | `kernel/main.c` |
+| boot modules | 64 (more are reported and left out) | `include/doors/multiboot2.h` |
+
+The growable tables (ROADMAP 3.1, `kernel/gtable.c`) take memory as they grow and never shrink;
+the limits above are ceilings, the real limit is free memory. The monitor's `tables` command shows
+each table's size. Kernel objects of other sizes come from the kernel heap (`kmalloc`, `kernel/kheap.c`).
 
 ## Not finished yet
 

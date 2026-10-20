@@ -8,7 +8,9 @@
 #include <doors/blk.h>
 #include <doors/fs.h>
 #include <doors/job.h>
+#include <doors/gtable.h>
 #include <doors/kernel.h>
+#include <doors/kheap.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
 #include <doors/string.h>
@@ -913,6 +915,91 @@ static void test_killjob(void)
 	kprintf("M6: KillJob ok (2 tasks, exchange and memory of the spinning job reclaimed)\n");
 	kprintf("M6: no leaks after 6 more jobs (pages, exchanges, link blocks, request blocks)\n");
 	kprintf("DOORS: M6 OK\n");
+}
+
+/* ======================================================================== 3.1 */
+
+static void test_kheap(void)
+{
+	static void *blk[600];
+	U64 b0, p0, b, p;
+	U32 i, k;
+
+	kheap_stats(&b0, &p0);
+	for (k = 0; k < 2; k++) {
+		for (i = 0; i < ARRAY_SIZE(blk); i++) {
+			U32 n = 1 + (i * 37) % (i & 1 ? 6000 : 2100), j;
+			U8 *q = kmalloc(n);
+
+			CHECK(q, "kmalloc(%u) failed", n);
+			for (j = 0; j < n; j++)
+				CHECK(!q[j], "kmalloc(%u): byte %u not zero", n, j);
+			memset(q, (int)i, n);
+			blk[i] = q;
+		}
+		for (i = 0; i < ARRAY_SIZE(blk); i += 2)	/* half, then the rest */
+			kfree(blk[i]);
+		for (i = 1; i < ARRAY_SIZE(blk); i += 2) {
+			CHECK(((U8 *)blk[i])[0] == (U8)i, "kmalloc block %u overwritten", i);
+			kfree(blk[i]);
+		}
+		kcheck();
+	}
+	kheap_stats(&b, &p);
+	CHECK(b == b0, "kheap: %lu blocks still in use", b - b0);
+	kprintf("3.1: kernel heap ok (%u blocks of 1..6000 bytes, twice; %lu pages kept for reuse)\n",
+		(U32)ARRAY_SIZE(blk), p);
+}
+
+#define MANY 1000
+
+/* One round: start MANY idle jobs at once (the job, task and exchange tables grow), end them all. */
+static void many_jobs(U32 *job)
+{
+	U32 i, left, t;
+
+	for (i = 0; i < MANY; i++)
+		job[i] = run("idle");
+	Sleep(10);
+	for (i = 0, left = 0; i < MANY; i++)
+		left += job_get(job[i]) && job_get(job[i])->alive;
+	CHECK(left == MANY, "only %u of %u idle jobs are running", left, MANY);
+	kcheck();
+	for (i = 0; i < MANY; i++)
+		CHECK(KillJob(job[i]) == ErcOk, "KillJob(%u) failed", job[i]);
+	for (t = 0; t < 500; t++) {			/* let the zombies be reaped */
+		for (i = 0, left = 0; i < MANY; i++)
+			left += job_task_count(job[i]);
+		if (!left)
+			break;
+		Sleep(1);
+	}
+	CHECK(!left, "%u tasks of %u killed jobs left", left, MANY);
+}
+
+static void test_many_jobs(void)
+{
+	static U32 job[MANY];
+	struct msg_stats s0, s;
+	U64 p0, p, t0 = timer_ticks();
+
+	/* Round 1 grows the tables, round 2 may still make a page table the kernel keeps (the
+	   kernel stacks land elsewhere); round 3 must give back exactly what it took. */
+	many_jobs(job);
+	many_jobs(job);
+	msg_get_stats(&s0);
+	p0 = pmm_free_pages() + gt_pages_total();
+	many_jobs(job);
+	msg_get_stats(&s);
+	p = pmm_free_pages() + gt_pages_total();
+	CHECK(s.exch_free == s0.exch_free && s.lb_free == s0.lb_free && s.rqb_free == s0.rqb_free &&
+	      !s.tmr_used, "messaging objects leaked by %u jobs (exch %u/%u, lb %u/%u, rqb %u/%u)", MANY,
+	      s.exch_free, s0.exch_free, s.lb_free, s0.lb_free, s.rqb_free, s0.rqb_free);
+	CHECK(p == p0, "pages leaked by %u jobs: %ld", MANY, (long)(p0 - p));
+	kcheck();
+	kprintf("3.1: %u jobs at once ok (3 rounds, %lu.%lu s; job numbers reused, tables at %u jobs, "
+		"%lu pages; no leaks)\n", MANY, (timer_ticks() - t0) / 100, (timer_ticks() - t0) / 10 % 10,
+		job_limit(), gt_pages_total());
 }
 
 /* ======================================================================== M7 */
@@ -2114,6 +2201,8 @@ void selftest_run(bool full)
 	test_user_fpu();
 	test_user_service();
 	test_killjob();
+	test_kheap();
+	test_many_jobs();
 	kcheck();
 
 	test_disk();

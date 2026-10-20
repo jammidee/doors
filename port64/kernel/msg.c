@@ -8,6 +8,7 @@
    message out) runs with them back on, as in MMURTL. */
 
 #include <doors/console.h>
+#include <doors/gtable.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
 #include <doors/string.h>
@@ -33,6 +34,10 @@ struct tmrblk {
 	U32 count;
 };
 
+/* Exchanges and link blocks are growable tables (ROADMAP 3.1): nEXCH and nLB are ceilings, and
+   the free counters count against them (ceiling minus in use), so they don't change when a
+   table grows. */
+static struct gtable gt_ex, gt_lb;
 static struct exch *ex;
 static struct lb *lbs, *free_lb;
 static U32 n_lb_free, n_exch_free;
@@ -40,25 +45,28 @@ static struct tmrblk tmr[nTmrBlks];
 static U32 tmr_used;
 static bool up;
 
-static void *pool(U64 bytes)
+/* more link blocks onto the free list; false at the ceiling or without memory */
+static bool lb_more(void)
 {
-	U8 *p;
+	U32 i, old = gt_lb.n;
 
-	if (AllocOSPage((U32)(PAGE_ROUND_UP(bytes) / PAGE_SIZE), &p))
-		panic("msg: out of memory for kernel pools");
-	return p;
+	if (!gt_grow(&gt_lb, gt_lb.n + 1024))
+		return false;
+	for (i = gt_lb.n; i-- > old;) {
+		lbs[i].next = free_lb;
+		free_lb = &lbs[i];
+	}
+	return true;
 }
 
 void msg_init(void)
 {
-	U32 i;
-
-	ex = pool(nEXCH * sizeof(*ex));
-	lbs = pool(nLB * sizeof(*lbs));
-	for (i = 0; i < nLB; i++) {
-		lbs[i].next = free_lb;
-		free_lb = &lbs[i];
-	}
+	gt_init(&gt_ex, "exchanges", GT_EXCH, sizeof(struct exch), nEXCH, 1024, 0);
+	gt_init(&gt_lb, "link blocks", GT_LB, sizeof(struct lb), nLB, 0, 0);
+	ex = (struct exch *)(void *)gt_ex.base;
+	lbs = (struct lb *)(void *)gt_lb.base;
+	if (!lb_more() || !lb_more() || !lb_more() || !lb_more())
+		panic("msg: out of memory for link blocks");
 	n_lb_free = nLB;
 	ex[0].inuse = true;		/* exchange 0 is never handed out: 0 means "none" */
 	ex[0].owner = 1;
@@ -82,6 +90,8 @@ static struct lb *lb_alloc(void)
 {
 	struct lb *lb = free_lb;
 
+	if (!lb && lb_more())
+		lb = free_lb;
 	if (lb) {
 		free_lb = lb->next;
 		lb->next = NULL;
@@ -92,7 +102,7 @@ static struct lb *lb_alloc(void)
 
 static void lb_free(struct lb *lb)
 {
-	ASSERT(lb >= lbs && lb < lbs + nLB);	/* not a link block of the pool */
+	ASSERT(lb >= lbs && lb < lbs + gt_lb.n);	/* not a link block of the pool */
 	lb->next = free_lb;
 	free_lb = lb;
 	n_lb_free++;
@@ -108,11 +118,11 @@ const char *msg_check(void)
 	if (!up)
 		return NULL;
 	for (lb = free_lb; lb; lb = lb->next)
-		if (++n > nLB)
+		if (++n > gt_lb.n)
 			return "msg: the free link block list has a loop";
-	if (n != n_lb_free)
+	if (n != n_lb_free - (nLB - gt_lb.n))	/* the counter also counts the ones not made yet */
 		return "msg: the free link block count doesn't match the free list";
-	for (e = 0; e < nEXCH; e++) {
+	for (e = 0; e < gt_ex.n; e++) {
 		struct exch *x = &ex[e];
 		struct lb *last = NULL;
 		struct task *t, *tlast = NULL;
@@ -127,7 +137,7 @@ const char *msg_check(void)
 		if (x->mhead && x->thead)
 			return "msg: an exchange queues both messages and waiting tasks";
 		for (lb = x->mhead; lb; lb = lb->next) {
-			if (lb < lbs || lb >= lbs + nLB || ++k > nLB)
+			if (lb < lbs || lb >= lbs + gt_lb.n || ++k > gt_lb.n)
 				return "msg: an exchange's message queue is broken";
 			last = lb;
 		}
@@ -148,7 +158,7 @@ const char *msg_check(void)
 
 static struct exch *get_exch(U32 e, erc_t *erc)
 {
-	if (e == 0 || e >= nEXCH) {
+	if (e == 0 || e >= gt_ex.n) {
 		*erc = ErcOutOfRange;
 		return NULL;
 	}
@@ -177,7 +187,9 @@ erc_t exch_alloc_job(U32 job, U32 *pExchRet)
 	U64 f = irq_save();
 	U32 e;
 
-	for (e = 1; e < nEXCH; e++) {
+	for (e = 1; ; e++) {
+		if (e == gt_ex.n && !gt_grow(&gt_ex, gt_ex.n + 256))
+			break;				/* the ceiling, or no memory for the table */
 		if (!ex[e].inuse) {
 			memset(&ex[e], 0, sizeof(ex[e]));
 			ex[e].inuse = true;
@@ -283,7 +295,7 @@ void exch_free(U32 e)
 {
 	U64 f = irq_save();
 
-	if (e && e < nEXCH && ex[e].inuse)
+	if (e && e < gt_ex.n && ex[e].inuse)
 		dealloc(e);
 	irq_restore(f);
 }
@@ -507,7 +519,7 @@ void exch_remove_waiter(struct task *t)
 	struct exch *x;
 	struct task **pp;
 
-	if (!t->wait_exch || t->wait_exch >= nEXCH)
+	if (!t->wait_exch || t->wait_exch >= gt_ex.n)
 		return;
 	x = &ex[t->wait_exch];
 	for (pp = &x->thead; *pp; pp = &(*pp)->next) {
@@ -532,7 +544,7 @@ void exch_free_job(U32 job)
 {
 	U32 e;
 
-	for (e = 1; e < nEXCH; e++)
+	for (e = 1; e < gt_ex.n; e++)
 		if (ex[e].inuse && ex[e].owner == job)
 			dealloc(e);
 }

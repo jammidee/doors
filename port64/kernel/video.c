@@ -7,6 +7,7 @@
    from interrupt handlers). The video calls act on the calling task's job, as in MMURTL. */
 
 #include <doors/console.h>
+#include <doors/gtable.h>
 #include <doors/job.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
@@ -23,7 +24,26 @@ struct vscreen {
 	U8 top;				/* first TTY row: 1 for job 1 (status line), else 0 */
 };
 
-static struct vscreen vs[MAX_JOBS];
+/* Jobs 0-2 have static screens (job 1's is needed from the first boot message on, before the
+   growable tables exist); job 3 and up have theirs in a growable table (ROADMAP 3.1). */
+static struct vscreen vs_boot[3];
+static struct gtable gt_screens;
+
+static struct vscreen *vscr(U32 j)
+{
+	return j < 3 ? &vs_boot[j] : (struct vscreen *)(void *)gt_screens.base + j;
+}
+#define VS(j) (*vscr(j))
+
+void vid_jobs_init(U32 first, U32 max)
+{
+	gt_init(&gt_screens, "screens", GT_SCREENS, sizeof(struct vscreen), max, first, 0);
+}
+
+bool vid_grow(U32 want)
+{
+	return gt_grow(&gt_screens, want);
+}
 static volatile U16 *vga = (volatile U16 *)PHYS_TO_VIRT(0xB8000);
 static U32 owner = 1;
 static U8 kattr = NORM_ATTR;
@@ -35,7 +55,7 @@ static U16 blank(U8 attr) { return (U16)(attr << 8) | ' '; }
 
 static void put(U32 job, U32 pos, U16 c)
 {
-	vs[job].cell[pos] = c;
+	VS(job).cell[pos] = c;
 	if (job == owner)
 		vga[pos] = c;
 }
@@ -46,7 +66,7 @@ static void cursor(U32 job)
 
 	if (job != owner)
 		return;
-	pos = (U16)(vs[job].y * VID_COLS + vs[job].x);
+	pos = (U16)(VS(job).y * VID_COLS + VS(job).x);
 	outb(0x3D4, 0x0F);
 	outb(0x3D5, (U8)(pos & 0xFF));
 	outb(0x3D4, 0x0E);
@@ -56,7 +76,7 @@ static void cursor(U32 job)
 /* Scroll the rectangle up (fUp) or down one line; the freed line gets NormAttr blanks. */
 static void scroll(U32 job, U32 col, U32 line, U32 ncols, U32 nlines, bool up)
 {
-	struct vscreen *s = &vs[job];
+	struct vscreen *s = &VS(job);
 	U32 r, c;
 
 	if (!nlines || !ncols)
@@ -81,7 +101,7 @@ static void scroll(U32 job, U32 col, U32 line, U32 ncols, U32 nlines, bool up)
    TTY area scrolls up. */
 static void tty(U32 job, char ch, U8 attr)
 {
-	struct vscreen *s = &vs[job];
+	struct vscreen *s = &VS(job);
 
 	switch (ch) {
 	case '\n':
@@ -117,9 +137,9 @@ static void clear(U32 job, U32 from_row)
 	U32 i;
 
 	for (i = from_row * VID_COLS; i < CELLS; i++)
-		put(job, i, blank(vs[job].norm));
-	vs[job].x = 0;
-	vs[job].y = from_row;
+		put(job, i, blank(VS(job).norm));
+	VS(job).x = 0;
+	VS(job).y = from_row;
 }
 
 static void show(U32 job)
@@ -128,7 +148,7 @@ static void show(U32 job)
 
 	owner = job;
 	for (i = 0; i < CELLS; i++)
-		vga[i] = vs[job].cell[i];
+		vga[i] = VS(job).cell[i];
 	cursor(job);
 }
 
@@ -136,12 +156,12 @@ void vid_init(void)
 {
 	U32 j;
 
-	for (j = 0; j < MAX_JOBS; j++) {
-		vs[j].norm = NORM_ATTR;
+	for (j = 0; j < 3; j++) {		/* the others: vid_job_new */
+		VS(j).norm = NORM_ATTR;
 		clear(j, 0);
 	}
-	vs[1].top = 1;
-	vs[1].y = 1;
+	VS(1).top = 1;
+	VS(1).y = 1;
 	show(1);
 }
 
@@ -154,8 +174,8 @@ void vid_job_new(U32 job)
 {
 	U64 f = irq_save();
 
-	vs[job].norm = NORM_ATTR;
-	vs[job].top = 0;
+	VS(job).norm = NORM_ATTR;
+	VS(job).top = 0;
 	clear(job, 0);
 	irq_restore(f);
 }
@@ -187,7 +207,7 @@ void vid_next_owner(void)
 	const struct job *jb;
 
 	do {
-		j = (j + 1) % MAX_JOBS;
+		j = (j + 1) % job_limit();
 		jb = job_get(j);
 	} while (j != owner && (j == 0 || j == 2 || !jb || !jb->alive));
 	show(j);
@@ -270,7 +290,7 @@ erc_t SetVidOwner(U32 dJobNum)
 	const struct job *jb = job_get(dJobNum);
 	U64 f;
 
-	if (dJobNum >= MAX_JOBS || !jb || !jb->alive || dJobNum == 2)
+	if (dJobNum >= job_limit() || !jb || !jb->alive || dJobNum == 2)
 		return ErcVidNum;
 	f = irq_save();
 	show(dJobNum);
@@ -286,13 +306,13 @@ erc_t GetVidOwner(U32 *pdVidNumRet)
 
 erc_t SetNormVid(U32 dAttr)
 {
-	vs[me()].norm = (U8)dAttr;
+	VS(me()).norm = (U8)dAttr;
 	return ErcOk;
 }
 
 erc_t GetNormVid(U32 *pdNormVidRet)
 {
-	*pdNormVidRet = vs[me()].norm;
+	*pdNormVidRet = VS(me()).norm;
 	return ErcOk;
 }
 
@@ -301,7 +321,7 @@ erc_t ClrScr(void)
 	U64 f = irq_save();
 	U32 j = me();
 
-	clear(j, vs[j].top);
+	clear(j, VS(j).top);
 	cursor(j);
 	irq_restore(f);
 	return ErcOk;
@@ -342,7 +362,7 @@ erc_t PutVidAttrs(U32 ddCol, U32 ddLine, U32 sChars, U32 dAttr)
 		return ErcVidParam;
 	f = irq_save();
 	for (i = 0; i < sChars; i++)
-		put(j, pos + i, (U16)((U8)dAttr << 8) | (vs[j].cell[pos + i] & 0xFF));
+		put(j, pos + i, (U16)((U8)dAttr << 8) | (VS(j).cell[pos + i] & 0xFF));
 	irq_restore(f);
 	return ErcOk;
 }
@@ -353,7 +373,7 @@ erc_t GetVidChar(U32 ddCol, U32 ddLine, U8 *pCharRet, U8 *pAttrRet)
 
 	if (ddCol >= VID_COLS || ddLine >= VID_ROWS)
 		return ErcVidParam;
-	c = vs[me()].cell[ddLine * VID_COLS + ddCol];
+	c = VS(me()).cell[ddLine * VID_COLS + ddCol];
 	*pCharRet = (U8)c;
 	*pAttrRet = (U8)(c >> 8);
 	return ErcOk;
@@ -367,8 +387,8 @@ erc_t SetXY(U32 NewX, U32 NewY)
 	if (NewX >= VID_COLS || NewY >= VID_ROWS)
 		return ErcVidParam;
 	f = irq_save();
-	vs[j].x = NewX;
-	vs[j].y = NewY;
+	VS(j).x = NewX;
+	VS(j).y = NewY;
 	cursor(j);
 	irq_restore(f);
 	return ErcOk;
@@ -376,8 +396,8 @@ erc_t SetXY(U32 NewX, U32 NewY)
 
 erc_t GetXY(U32 *pXRet, U32 *pYRet)
 {
-	*pXRet = vs[me()].x;
-	*pYRet = vs[me()].y;
+	*pXRet = VS(me()).x;
+	*pYRet = VS(me()).y;
 	return ErcOk;
 }
 

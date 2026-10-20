@@ -10,6 +10,7 @@
      MMURTL trusted it. */
 
 #include <doors/console.h>
+#include <doors/gtable.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
 #include <doors/string.h>
@@ -22,37 +23,38 @@ struct svc {
 	bool used;
 };
 
+/* Request blocks: a growable table (ROADMAP 3.1), also mapped read-only for user-mode services at
+   RQB_UBASE (they read their requests as MMURTL services did). Every page the table gets is mapped
+   in both places; the kernel half's page tables are shared, so all address spaces see it.
+   nRQB is the ceiling; n_rqb_free counts against it. */
+static struct gtable gt_rqb;
 static struct RqBlk *rqbs, *free_rqb;
 static U32 n_rqb_free;
 static struct svc svcs[nSVC];
 
-static U64 pool_bytes;
+#define pool_bytes (gt_rqb.pages * PAGE_SIZE)
 
-void rqb_init(void)
+static bool rqb_more(void)
 {
-	U8 *p;
-	U32 i, n;
+	U32 i, old = gt_rqb.n;
 
-	pool_bytes = PAGE_ROUND_UP(nRQB * sizeof(struct RqBlk));
-	n = (U32)(pool_bytes / PAGE_SIZE);
-	if (AllocOSPage(n, &p))
-		panic("rqb: out of memory for request blocks");
-	rqbs = (struct RqBlk *)p;
-	for (i = 0; i < nRQB; i++) {
+	if (!gt_grow(&gt_rqb, gt_rqb.n + 64))
+		return false;
+	for (i = gt_rqb.n; i-- > old;) {
 		rqbs[i].pNextRQB = free_rqb;
 		free_rqb = &rqbs[i];
 	}
+	return true;
+}
+
+void rqb_init(void)
+{
+	gt_init(&gt_rqb, "request blocks", GT_RQB, sizeof(struct RqBlk), nRQB, 0, RQB_UBASE);
+	rqbs = (struct RqBlk *)(void *)gt_rqb.base;
+	while (gt_rqb.n < 256)
+		if (!rqb_more())
+			panic("rqb: out of memory for request blocks");
 	n_rqb_free = nRQB;
-
-	/* Read-only window for user-mode services (they read their requests as MMURTL services
-	   did). Made at boot, before any address space exists, so every space shares it. */
-	for (i = 0; i < n; i++) {
-		U64 pa;
-
-		if (GetPhyAdd(1, p + i * PAGE_SIZE, &pa) ||
-		    vmm_map(&kernel_space, RQB_UBASE + i * PAGE_SIZE, pa, PTE_U | PTE_NX))
-			panic("rqb: cannot map the user window");
-	}
 }
 
 /* Kernel handle <-> user handle (the same request block seen through RQB_UBASE). */
@@ -83,7 +85,7 @@ static struct RqBlk *rqb_from(U64 h)
 {
 	U64 base = (U64)(uintptr_t)rqbs;
 
-	if (h < base || h >= base + nRQB * sizeof(struct RqBlk) ||
+	if (h < base || h >= base + (U64)gt_rqb.n * sizeof(struct RqBlk) ||
 	    (h - base) % sizeof(struct RqBlk))
 		return NULL;
 	return ((struct RqBlk *)(uintptr_t)h)->inuse ? (struct RqBlk *)(uintptr_t)h : NULL;
@@ -225,6 +227,8 @@ erc_t Request(const char *pSvcName, U32 wSvcCode, U32 dRespExch, U64 *pRqHndlRet
 		return ErcNoSuchSvc;
 	}
 	svc_exch = s->exch;
+	if (!free_rqb)
+		rqb_more();			/* the table grows; at its ceiling or without memory: */
 	r = free_rqb;
 	if (!r) {
 		irq_restore(f);
@@ -342,7 +346,7 @@ void rqb_job_gone(U32 job)
 {
 	U32 i;
 
-	for (i = 0; i < nRQB; i++) {
+	for (i = 0; i < gt_rqb.n; i++) {
 		struct RqBlk *r = &rqbs[i];
 
 		if (!r->inuse)

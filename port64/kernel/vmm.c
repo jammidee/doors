@@ -15,6 +15,7 @@
    The user half (0 .. USER_TOP) is private per job. */
 
 #include <doors/console.h>
+#include <doors/gtable.h>
 #include <doors/mem.h>
 #include <doors/string.h>
 #include <doors/task.h>
@@ -218,14 +219,25 @@ void vmm_init(void)
 
 /* ---- address spaces ---- */
 
-#define MAX_JOBS 64
-static struct addr_space spaces[MAX_JOBS];
+/* one per job number, growing with the job table (job.c job_grow) */
+static struct gtable gt_spaces;
+#define spaces ((struct addr_space *)gt_spaces.base)
+
+void vmm_spaces_init(U32 first, U32 max)
+{
+	gt_init(&gt_spaces, "address spaces", GT_SPACES, sizeof(struct addr_space), max, first, 0);
+}
+
+bool vmm_spaces_grow(U32 want)
+{
+	return gt_grow(&gt_spaces, want);
+}
 
 struct addr_space *job_space(U32 job)
 {
 	if (job == 1)
 		return &kernel_space;
-	if (job >= MAX_JOBS || !spaces[job].pml4)
+	if (job >= gt_spaces.n || !spaces[job].pml4)
 		return NULL;
 	return &spaces[job];
 }
@@ -235,7 +247,7 @@ struct addr_space *vmm_space_create(U32 job)
 	struct addr_space *as;
 	U64 *pml4;
 
-	if (job < 2 || job >= MAX_JOBS || spaces[job].pml4)
+	if (job < 2 || job >= gt_spaces.n || spaces[job].pml4)
 		return NULL;
 	as = &spaces[job];
 	as->pml4 = pmm_alloc();

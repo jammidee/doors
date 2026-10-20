@@ -40,6 +40,7 @@ log (`build/serial-run.log` with `doors.bat`) gets every program's text.
 | `vols` | the volumes: letter, disk, partition, size, type and label |
 | `df` | each volume's size, free space and allocation unit, and on ext4 the free inodes (asks FILESYS: `GetVolSpace`) |
 | `check` | walks the kernel's structures (scheduler, messaging, page allocator) and panics if one doesn't match its counters (`kcheck`) |
+| `tables` | the growable kernel tables (tasks, jobs, exchanges, link blocks, request blocks, open files, …): entries, ceiling and memory, and the kernel heap |
 | `crash` | shows the last crash report saved on the boot disk (a boot after a panic shows it once by itself) |
 | `dir C:\PATH` | lists a directory on any volume (FAT or ext4): date and time, `<DIR>`, size, name |
 | `type C:\FILE` | prints a file |

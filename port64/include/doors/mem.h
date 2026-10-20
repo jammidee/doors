@@ -64,6 +64,8 @@ U64   vmm_unmap(struct addr_space *as, U64 va);		/* returns the old PTE (0 if no
 bool  vmm_translate(struct addr_space *as, U64 va, U64 *pa, U64 *pte);
 U64   vmm_find_free(struct addr_space *as, U64 start, U64 end, U64 n);	/* 0 if none */
 struct addr_space *vmm_space_create(U32 job);
+void vmm_spaces_init(U32 first, U32 max);		/* the per-job table (job.c) */
+bool vmm_spaces_grow(U32 want);
 void  vmm_space_destroy(struct addr_space *as);
 void  vmm_space_switch(struct addr_space *as);
 struct addr_space *job_space(U32 job);			/* until the job manager exists (M6) */

@@ -148,11 +148,11 @@ The matching service is in [chapter 7](07-programming.md#writing-a-service).
 
 | Object | Count |
 |---|---|
-| exchanges | 1024 |
-| link blocks (queued messages) | 4096 |
-| request blocks | 256 |
+| exchanges | grows as needed, up to 65,536 |
+| link blocks (queued messages) | grows as needed, up to 1,048,576 |
+| request blocks | grows as needed, up to 65,536 |
 | named services | 64 |
 | pending timers | 64 |
 
-When a pool is empty, the call returns `ErcNoMoreExch`, `ErcNoMoreLBs`, `ErcNoMoreRqBlks`,
+When a pool is empty (a growing one: at its ceiling or out of memory), the call returns `ErcNoMoreExch`, `ErcNoMoreLBs`, `ErcNoMoreRqBlks`,
 `ErcOutOfSvcDesc` or `ErcNoMoreTBs`. The monitor's `tasks` command shows the free counts.

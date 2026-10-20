@@ -15,6 +15,7 @@
 #include <doors/console.h>
 #include <doors/cpu.h>
 #include <doors/fs.h>
+#include <doors/gtable.h>
 #include <doors/job.h>
 #include <doors/mem.h>
 #include <doors/msg.h>
@@ -24,17 +25,45 @@
 #include <doors/video.h>
 #include <doors/x86.h>
 
-static struct job jobs[MAX_JOBS];
+/* The job table and the per-job tables of other modules (address spaces, screens, key buffers)
+   grow together (ROADMAP 3.1): job numbers below job_cap exist in all of them. */
+#define FIRST_JOBS 64
+static struct gtable gt_jobs;
+#define jobs ((struct job *)(void *)gt_jobs.base)
+static U32 job_cap;
 
 void job_init(void)
 {
+	vmm_spaces_init(FIRST_JOBS, MAX_JOBS);
+	vid_jobs_init(FIRST_JOBS, MAX_JOBS);
+	kbd_jobs_init(FIRST_JOBS, MAX_JOBS);
+	gt_init(&gt_jobs, "jobs", GT_JOBS, sizeof(struct job), MAX_JOBS, FIRST_JOBS, 0);
+	job_cap = FIRST_JOBS;
 	jobs[1].used = jobs[1].alive = true;
 	memcpy(jobs[1].name, "DOORS OS", 9);
 }
 
+U32 job_limit(void)
+{
+	return job_cap;
+}
+
+/* job numbers up to `want` in every per-job table; false (nothing changes) without memory */
+bool job_grow(U32 want)
+{
+	if (want <= job_cap)
+		return true;
+	if (want > MAX_JOBS)
+		return false;
+	if (!gt_grow(&gt_jobs, want) || !vmm_spaces_grow(want) || !vid_grow(want) || !kbd_grow(want))
+		return false;
+	job_cap = want;
+	return true;
+}
+
 const struct job *job_get(U32 job)
 {
-	return job < MAX_JOBS && jobs[job].used ? &jobs[job] : NULL;
+	return job < job_cap && jobs[job].used ? &jobs[job] : NULL;
 }
 
 /* ---- ELF64 loader ---- */
@@ -238,6 +267,22 @@ static erc_t build(U32 j, const struct program *p)
 	return ErcOk;
 }
 
+/* A job number for a new job: one never used, else the lowest of an ended job whose tasks are all
+   reaped (its exit code stays readable until then, as job_get shows it), else job_cap (grow).
+   Interrupts are off. */
+static U32 free_slot(void)
+{
+	U32 j;
+
+	for (j = FIRST_USER_JOB; j < job_cap; j++)
+		if (!jobs[j].used)
+			return j;
+	for (j = FIRST_USER_JOB; j < job_cap; j++)
+		if (jobs[j].ended && !job_has_tasks(j))
+			return j;
+	return job_cap;
+}
+
 erc_t LoadNewJob(const char *pFileName, U32 cbFileName, U32 *pJobNumRet)
 {
 	struct program p;
@@ -248,12 +293,11 @@ erc_t LoadNewJob(const char *pFileName, U32 cbFileName, U32 *pJobNumRet)
 	if ((erc = find_program(pFileName, cbFileName, &p)))
 		return erc;
 	f = irq_save();
-	for (j = FIRST_USER_JOB; j < MAX_JOBS && jobs[j].used; j++)
-		;
-	if (j == MAX_JOBS) {
+	j = free_slot();
+	if (j == job_cap && !job_grow(job_cap + 64 < MAX_JOBS ? job_cap + 64 : MAX_JOBS)) {
 		irq_restore(f);
 		free_program(&p);
-		return ErcNoMoreJCBs;
+		return ErcNoMoreJCBs;		/* the ceiling, or no memory for more job numbers */
 	}
 	memset(&jobs[j], 0, sizeof(jobs[j]));
 	jobs[j].used = true;		/* claimed */
@@ -296,6 +340,7 @@ static void job_end(U32 job, erc_t erc)
 
 	teardown(job);
 	jobs[job].alive = false;
+	jobs[job].ended = true;
 	jobs[job].exit_erc = erc;
 	vid_job_gone(job);			/* if it was on screen, the monitor (job 1) is shown */
 	kbd_job_gone(job);
@@ -319,6 +364,7 @@ static NORETURN void replace(struct program *p, erc_t erc)
 	jobs[job].exit_erc = erc;
 	if (build(job, p)) {
 		jobs[job].alive = false;
+		jobs[job].ended = true;
 		vid_job_gone(job);
 		kbd_job_gone(job);
 		kprintf("Job number %u terminated. Error: %u\n", job, erc);
@@ -364,7 +410,7 @@ erc_t Chain(const char *pFileName, U32 cbFileName, erc_t dExitError)
 /* KillJob always ends the job: its exit run file is not loaded. */
 erc_t KillJob(U32 JobNum)
 {
-	if (JobNum < FIRST_USER_JOB || JobNum >= MAX_JOBS || !jobs[JobNum].alive)
+	if (JobNum < FIRST_USER_JOB || JobNum >= job_cap || !jobs[JobNum].alive)
 		return ErcBadJobNum;
 	job_end(JobNum, ErcOpCancel);	/* MMURTL: a killed job ends with ErcOpCancel (4) */
 	return ErcOk;
@@ -412,7 +458,7 @@ erc_t job_set_cmdline(U32 job, const char *cmd)
 {
 	U32 n = (U32)strlen(cmd);
 
-	if (job < FIRST_USER_JOB || job >= MAX_JOBS || !jobs[job].used)
+	if (job < FIRST_USER_JOB || job >= job_cap || !jobs[job].used)
 		return ErcBadJobNum;
 	if (n > sizeof(jobs[job].cmdline) - 1)
 		n = sizeof(jobs[job].cmdline) - 1;
@@ -465,7 +511,7 @@ erc_t GetSysOut(char *p, U32 *n)		{ return get_str(ME->sysout, p, n); }
 /* GetPath takes a job number (MMURTL: so the CLI can show another job's path). */
 erc_t GetPath(U32 JobNum, char *pPathRet, U32 *pdcbPathRet)
 {
-	if (JobNum >= MAX_JOBS || !jobs[JobNum].used)
+	if (JobNum >= job_cap || !jobs[JobNum].used)
 		return ErcBadJobNum;
 	return get_str(jobs[JobNum].path, pPathRet, pdcbPathRet);
 }

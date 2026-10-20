@@ -28,9 +28,9 @@
 #include <doors/erc.h>
 #include <doors/types.h>
 
-#define nEXCH    1024		/* MMURTL: 256 dynamic + 3 static */
-#define nLB      4096		/* link blocks (MMURTL 512) */
-#define nRQB     256		/* request blocks (MMURTL 128) */
+#define nEXCH    65536		/* ceiling (growable, kernel/msg.c); MMURTL: 256 dynamic + 3 static */
+#define nLB      1048576	/* link blocks, ceiling (growable); MMURTL 512 */
+#define nRQB     65536		/* request blocks, ceiling (growable, kernel/rqb.c); MMURTL 128 */
 #define nSVC     64		/* named services (MMURTL 64) */
 #define nTmrBlks 64		/* pending Sleep/Alarm timers (MMURTL 32) */
 

@@ -12,6 +12,22 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.11.0 — 2026-10-21 — growable kernel tables, kernel heap
+- **Growable tables** (ROADMAP 3.1, `kernel/gtable.c`): jobs, tasks, exchanges, link blocks,
+  request blocks, open files, address spaces, screens and key buffers are no longer fixed arrays.
+  Each table has its own 16 GiB slice of kernel address space and maps pages as it grows. Entries
+  never move. The old limits are now ceilings: 4,096 jobs, 65,536 tasks, exchanges, request blocks
+  and open files, and about one million link blocks. The real limit is free memory.
+- **Kernel heap:** `kmalloc`/`kfree` (`kernel/kheap.c`), with size classes up to 2 KB and whole
+  pages above that. Blocks come zeroed. A bad or double free panics. The heap is part of `kcheck`.
+- **Job numbers are reused:** a new job takes the number of one that ended, once its tasks are
+  gone. Before this, every job used up a number, so the system ran out after 64 programs.
+- **Boot modules:** up to 64, raised from 16. Before, the 17th and later were dropped without a
+  message.
+- Monitor command **`tables`**.
+- New program `idle`. `make test` runs 1,000 idle jobs at once, three times, and checks that nothing
+  leaks (2.4 s under QEMU).
+
 ## 1.10.1 — 2026-10-21 — soak test (unfinished)
 - **`make soak SOAK_MINUTES=M`** (ROADMAP 2.3, unfinished): in rounds, the kernel supervisor
   (`kernel/soak.c`, kernel command line `soak`) starts a random mix of programs and stops some of

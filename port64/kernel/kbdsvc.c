@@ -13,6 +13,7 @@
    wait on; a waiting flag avoids queuing a wake-up message per key. */
 
 #include <doors/console.h>
+#include <doors/gtable.h>
 #include <doors/job.h>
 #include <doors/msg.h>
 #include <doors/rqblk.h>
@@ -24,14 +25,38 @@
 
 void kbd_set_service(U32 exch);
 
-static struct {
+/* One per job number, in a growable table (ROADMAP 3.1) */
+struct kjob {
 	U32 key[NKEYS];
 	U32 in, n;
 	U32 exch;			/* wake-up exchange (owned by job 1) */
 	bool waiting;
-} kq[MAX_JOBS];
+	U64 pending;			/* KEYBOARD request waiting for a key (0 = none) */
+	U64 stale;			/* request of a job that ended, still to be answered */
+};
+static struct gtable gt_keys;
+#define kq ((struct kjob *)(void *)gt_keys.base)
 
 static U32 svc_exch;
+
+void kbd_jobs_init(U32 first, U32 max)
+{
+	gt_init(&gt_keys, "key buffers", GT_KEYQ, sizeof(struct kjob), max, first, 0);
+}
+
+/* new job slots: their wake-up exchanges too, once the service runs */
+bool kbd_grow(U32 want)
+{
+	U32 j, old = gt_keys.n;
+
+	if (!gt_grow(&gt_keys, want))
+		return false;
+	if (svc_exch)
+		for (j = old; j < gt_keys.n; j++)
+			if (!kq[j].exch && AllocExch(&kq[j].exch))
+				return false;
+	return true;
+}
 
 /* The "KEYBOARD" service (MMURTL's request interface to the keyboard): code 1 reads a key into
    pData1 (4 bytes); dData0 != 0 waits for one. Code 4 gave the keyboard to job dData0; in DOORS the
@@ -40,8 +65,6 @@ static U32 svc_exch;
 #define KBD_SVC_ASSIGN 4
 
 static U32 req_exch;
-static U64 pending[MAX_JOBS];		/* request waiting for a key (0 = none) */
-static U64 stale[MAX_JOBS];		/* request of a job that ended, still to be answered */
 
 static void answer(U64 h, U32 code)
 {
@@ -65,9 +88,9 @@ static void kbd_req_task(void *unused)
 
 		if (!erc && !m[0]) {			/* (0, job): a job ended while it waited */
 			job = (U32)m[1];
-			if (job < MAX_JOBS && stale[job]) {
-				Respond(stale[job], ErcOwnerAbort);
-				stale[job] = 0;
+			if (job < gt_keys.n && kq[job].stale) {
+				Respond(kq[job].stale, ErcOwnerAbort);
+				kq[job].stale = 0;
 			}
 			continue;
 		}
@@ -88,11 +111,11 @@ static void kbd_req_task(void *unused)
 				kq[job].n--;
 				irq_restore(f);
 				answer(m[0], code);
-			} else if (!r->dData0 || pending[job]) {
+			} else if (!r->dData0 || kq[job].pending) {
 				irq_restore(f);
 				Respond(m[0], r->dData0 ? ErcDevInUse : ErcNoKeyAvail);
 			} else {
-				pending[job] = m[0];		/* answered by kbd_task */
+				kq[job].pending = m[0];		/* answered by kbd_task */
 				irq_restore(f);
 			}
 			break;
@@ -129,10 +152,10 @@ static void kbd_task(void *unused)
 		}
 		job = vid_owner();
 		f = irq_save();
-		if (pending[job]) {				/* a KEYBOARD request waits: answer it */
-			U64 h = pending[job];
+		if (kq[job].pending) {				/* a KEYBOARD request waits: answer it */
+			U64 h = kq[job].pending;
 
-			pending[job] = 0;
+			kq[job].pending = 0;
 			irq_restore(f);
 			answer(h, code);
 			continue;
@@ -153,12 +176,12 @@ static void kbd_task(void *unused)
 
 void kbd_service_start(void)
 {
-	erc_t erc;
+	erc_t erc = ErcOk;
 	U32 j;
 
 	if (svc_exch)
 		return;
-	for (j = 1; j < MAX_JOBS; j++)
+	for (j = 1; j < gt_keys.n; j++)
 		if (AllocExch(&kq[j].exch))
 			panic("keyboard: no exchanges");
 	if (AllocExch(&svc_exch) || !task_create("keyboard", kbd_task, NULL, 1, 1, &erc))
@@ -192,9 +215,9 @@ void kbd_job_new(U32 job)
 void kbd_job_gone(U32 job)
 {
 	flush(job);
-	if (pending[job]) {
-		stale[job] = pending[job];
-		pending[job] = 0;
+	if (kq[job].pending) {
+		kq[job].stale = kq[job].pending;
+		kq[job].pending = 0;
 		ISendMsg(req_exch, 0, job);
 	}
 }
