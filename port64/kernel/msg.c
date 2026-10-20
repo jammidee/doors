@@ -41,6 +41,7 @@ static struct gtable gt_ex, gt_lb;
 static struct exch *ex;
 static struct lb *lbs, *free_lb;
 static U32 n_lb_free, n_exch_free;
+static U32 ex_low = 1;			/* no free exchange below this (the search starts here) */
 static struct tmrblk tmr[nTmrBlks];
 static U32 tmr_used;
 static bool up;
@@ -187,7 +188,7 @@ erc_t exch_alloc_job(U32 job, U32 *pExchRet)
 	U64 f = irq_save();
 	U32 e;
 
-	for (e = 1; ; e++) {
+	for (e = ex_low; ; e++) {
 		if (e == gt_ex.n && !gt_grow(&gt_ex, gt_ex.n + 256))
 			break;				/* the ceiling, or no memory for the table */
 		if (!ex[e].inuse) {
@@ -195,6 +196,7 @@ erc_t exch_alloc_job(U32 job, U32 *pExchRet)
 			ex[e].inuse = true;
 			ex[e].owner = job;
 			n_exch_free--;
+			ex_low = e + 1;
 			*pExchRet = e;
 			irq_restore(f);
 			return ErcOk;
@@ -204,28 +206,26 @@ erc_t exch_alloc_job(U32 job, U32 *pExchRet)
 	return ErcNoMoreExch;
 }
 
-/* Hand an LB to the first task waiting at the exchange, or queue it there. Interrupts off. */
-static void deliver(struct exch *x, struct lb *lb, bool may_switch)
+
+/* A task waits at x: it gets the message itself (no link block, so a wake-up such as a timer's
+   can't fail for want of link blocks). */
+static bool deliver(struct exch *x, U64 lo, U64 hi, U8 type, bool may_switch)
 {
 	struct task *t = x->thead;
 
-	if (t) {
-		x->thead = t->next;
-		if (!x->thead)
-			x->ttail = NULL;
-		t->next = NULL;
-		t->lb_ret = lb;
-		t->wait_erc = ErcOk;
-		t->wait_exch = 0;
-		sched_wake(t, may_switch);
-		return;
-	}
-	lb->next = NULL;
-	if (x->mtail)
-		x->mtail->next = lb;
-	else
-		x->mhead = lb;
-	x->mtail = lb;
+	if (!t)
+		return false;
+	x->thead = t->next;
+	if (!x->thead)
+		x->ttail = NULL;
+	t->next = NULL;
+	t->msg[0] = lo;
+	t->msg[1] = hi;
+	t->msg_type = type;
+	t->wait_erc = ErcOk;
+	t->wait_exch = 0;
+	sched_wake(t, may_switch);
+	return true;
 }
 
 /* Send one message (any LB type). Used by SendMsg/ISendMsg here and by rqb.c. */
@@ -236,7 +236,7 @@ erc_t msg_post(U32 e, U64 lo, U64 hi, U8 type, bool may_switch)
 	struct exch *x = get_exch(e, &erc);
 	struct lb *lb;
 
-	if (x) {
+	if (x && !deliver(x, lo, hi, type, may_switch)) {	/* nobody waits: queue it */
 		lb = lb_alloc();
 		if (!lb) {
 			erc = ErcNoMoreLBs;
@@ -244,7 +244,12 @@ erc_t msg_post(U32 e, U64 lo, U64 hi, U8 type, bool may_switch)
 			lb->lo = lo;
 			lb->hi = hi;
 			lb->type = type;
-			deliver(x, lb, may_switch);
+			lb->next = NULL;
+			if (x->mtail)
+				x->mtail->next = lb;
+			else
+				x->mhead = lb;
+			x->mtail = lb;
 		}
 	}
 	irq_restore(f);
@@ -281,13 +286,14 @@ static void dealloc(U32 e)
 
 		x->thead = t->next;
 		t->next = NULL;
-		t->lb_ret = NULL;
 		t->wait_erc = ErcNotAlloc;
 		t->wait_exch = 0;
 		sched_wake(t, false);
 	}
 	kill_alarms(e);
 	memset(x, 0, sizeof(*x));
+	if (e < ex_low)
+		ex_low = e;
 	n_exch_free++;
 }
 
@@ -341,19 +347,32 @@ erc_t ISendMsg(U32 Exch, U64 dMsg1, U64 dMsg2)
 	return msg_post(Exch, dMsg1, dMsg2, LB_DATA, false);
 }
 
-/* Task context, interrupts on: finish receiving an LB. */
-static erc_t receive(struct lb *lb, U64 *pMsgRet)
+/* Take the first queued message off x into m[2]; false if none. Interrupts off. */
+static bool dequeue(struct exch *x, U64 *m, U8 *type)
+{
+	struct lb *lb = x->mhead;
+
+	if (!lb)
+		return false;
+	x->mhead = lb->next;
+	if (!x->mhead)
+		x->mtail = NULL;
+	m[0] = lb->lo;
+	m[1] = lb->hi;
+	*type = lb->type;
+	lb_free(lb);
+	return true;
+}
+
+/* Task context, interrupts on: finish receiving a message. */
+static erc_t receive(const U64 *m, U8 type, U64 *pMsgRet)
 {
 	erc_t erc = ErcOk;
-	U64 f;
 
-	if (lb->type == LB_REQ)
-		erc = rqb_received(lb->lo);	/* alias pData1/pData2 into this job */
-	pMsgRet[0] = lb->lo;
-	pMsgRet[1] = lb->hi;
-	f = irq_save();
-	lb_free(lb);
-	irq_restore(f);
+	if (type == LB_REQ)
+		erc = rqb_received(m[0]);	/* alias pData1/pData2 into this job */
+	pMsgRet[0] = m[0];
+	pMsgRet[1] = m[1];
 	return erc;
 }
 
@@ -362,7 +381,8 @@ erc_t WaitMsg(U32 Exch, U64 *pMsgRet)
 	U64 f;
 	erc_t erc;
 	struct exch *x;
-	struct lb *lb;
+	U64 m[2];
+	U8 type;
 
 	if (!pMsgRet)
 		return ErcNullPtr;
@@ -372,15 +392,9 @@ erc_t WaitMsg(U32 Exch, U64 *pMsgRet)
 		irq_restore(f);
 		return erc;
 	}
-	lb = x->mhead;
-	if (lb) {
-		x->mhead = lb->next;
-		if (!x->mhead)
-			x->mtail = NULL;
-	} else {
+	if (!dequeue(x, m, &type)) {
 		/* Queue ourselves on the exchange and give up the CPU until a message arrives. */
 		current->next = NULL;
-		current->lb_ret = NULL;
 		current->wait_exch = Exch;
 		if (x->ttail)
 			x->ttail->next = current;
@@ -393,10 +407,12 @@ erc_t WaitMsg(U32 Exch, U64 *pMsgRet)
 			irq_restore(f);
 			return erc;
 		}
-		lb = current->lb_ret;
+		m[0] = current->msg[0];
+		m[1] = current->msg[1];
+		type = current->msg_type;
 	}
 	irq_restore(f);
-	return receive(lb, pMsgRet);
+	return receive(m, type, pMsgRet);
 }
 
 erc_t CheckMsg(U32 Exch, U64 *pMsgRet)
@@ -404,7 +420,8 @@ erc_t CheckMsg(U32 Exch, U64 *pMsgRet)
 	U64 f;
 	erc_t erc;
 	struct exch *x;
-	struct lb *lb;
+	U64 m[2];
+	U8 type;
 
 	if (!pMsgRet)
 		return ErcNullPtr;
@@ -414,16 +431,12 @@ erc_t CheckMsg(U32 Exch, U64 *pMsgRet)
 		irq_restore(f);
 		return erc;
 	}
-	lb = x->mhead;
-	if (!lb) {
+	if (!dequeue(x, m, &type)) {
 		irq_restore(f);
 		return ErcNoMsg;
 	}
-	x->mhead = lb->next;
-	if (!x->mhead)
-		x->mtail = NULL;
 	irq_restore(f);
-	return receive(lb, pMsgRet);
+	return receive(m, type, pMsgRet);
 }
 
 /* ---- timer blocks: Alarm, KillAlarm, Sleep ---- */

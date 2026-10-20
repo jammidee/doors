@@ -101,6 +101,15 @@ TEST_ARGS := \
 	--expect "M7: LoadNewJob from a file ok" \
 	--expect "fsuser: all file calls from ring 3 ok" \
 	--expect "M7: file calls from ring 3 ok" \
+	--expect "3.2: out of pages ok" \
+	--expect "3.2: out of exchanges ok" \
+	--expect "3.2: out of link blocks ok" \
+	--expect "3.2: out of request blocks ok" \
+	--expect "3.2: out of timers ok" \
+	--expect "taskhog: " \
+	--expect "3.2: out of tasks ok" \
+	--expect "3.2: out of open files ok" \
+	--expect "3.2: resource exhaustion ok" \
 	--expect "DOORS: M7 OK" \
 	--expect "FAT on E: was not unmounted cleanly (dirty flag set); checking it" \
 	--expect "FAT on E: check: 4 problems" \

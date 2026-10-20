@@ -2161,6 +2161,207 @@ static void df_handler(struct regs *r)
 	halt_forever();
 }
 
+/* ======================================================================== 3.2 */
+
+/* Each resource is used up in turn. While it is gone, the calls that need it return MMURTL's
+   error and a new job fails cleanly; afterwards every count is back and a program runs again.
+   Tables that would take long to fill (link blocks, request blocks, tasks, open files) get their
+   ceiling lowered to their current size first (gt_limit); pages, exchanges and timers are used up
+   for real. */
+
+static struct msg_stats ex_base;
+static U64 ex_pages;
+
+static void ex_snapshot(void)
+{
+	msg_get_stats(&ex_base);
+	ex_pages = pmm_free_pages() + gt_pages_total();
+}
+
+static void ex_no_job(const char *what, erc_t want)
+{
+	U32 job = 0;
+	erc_t e = LoadNewJob(S("hello"), &job);
+
+	CHECK(e == want, "out of %s: LoadNewJob gave %u, expected %u", what, e, want);
+}
+
+static void ex_recovered(const char *what)
+{
+	const struct job *j;
+	struct msg_stats s;
+	U64 p;
+	U32 job;
+
+	msg_get_stats(&s);
+	CHECK(s.exch_free == ex_base.exch_free && s.lb_free == ex_base.lb_free &&
+	      s.rqb_free == ex_base.rqb_free && s.tmr_used == ex_base.tmr_used &&
+	      s.svc_used == ex_base.svc_used,
+	      "after %s: not all back (exch %u/%u, lb %u/%u, rqb %u/%u, tmr %u/%u, svc %u/%u)", what,
+	      s.exch_free, ex_base.exch_free, s.lb_free, ex_base.lb_free, s.rqb_free, ex_base.rqb_free,
+	      s.tmr_used, ex_base.tmr_used, s.svc_used, ex_base.svc_used);
+	p = pmm_free_pages() + gt_pages_total();
+	CHECK(p == ex_pages, "after %s: %ld pages not back", what, (long)(ex_pages - p));
+	kcheck();
+	job = run("hello");
+	j = wait_job(job, 500);
+	CHECK(j && !j->alive && j->exit_erc == ErcOk, "after %s: hello did not run", what);
+}
+
+/* All free memory in OS pages (64 at a time, then fewer), chained through the pages themselves. */
+static U32 ex_pages_round(bool check)
+{
+	struct chunk {
+		struct chunk *next;
+		U32 n;
+	} *head = NULL, *c;
+	U32 n = 64, total = 0;
+	erc_t e = ErcOk;
+	U8 *p;
+
+	while (n) {
+		if ((e = AllocOSPage(n, &p))) {
+			if (e != ErcNoMem)
+				break;
+			n /= 2;
+			continue;
+		}
+		c = (struct chunk *)(void *)p;
+		c->next = head;
+		c->n = n;
+		head = c;
+		total += n;
+	}
+	CHECK(e == ErcNoMem, "out of pages: AllocOSPage gave %u, expected ErcNoMem", e);
+	if (check) {
+		U32 x;
+
+		CHECK(!kmalloc(3 * PAGE_SIZE), "out of pages: kmalloc of 3 pages worked");
+		ex_no_job("pages", ErcNoMem);
+		CHECK(AllocExch(&x) == ErcOk && DeAllocExch(x) == ErcOk,
+		      "out of pages: an exchange (table not full) failed");
+	}
+	while (head) {
+		c = head;
+		head = c->next;
+		DeAllocPage((U8 *)c, c->n);
+	}
+	return total;
+}
+
+static void test_exhaust(void)
+{
+	static U32 fh[4096];
+	U32 n, x, q, svc, resp, old, job, t;
+	U64 m[2], h;
+	U32 *xs;
+	erc_t e;
+
+	/* pages: a first round makes the OS region's page tables (kept), the second is checked */
+	ex_pages_round(false);
+	ex_snapshot();
+	n = ex_pages_round(true);
+	ex_recovered("pages");
+	kprintf("3.2: out of pages ok (%u pages taken; AllocOSPage ErcNoMem, kmalloc NULL, LoadNewJob "
+		"ErcNoMem; all back)\n", n);
+
+	/* exchanges: every one up to the ceiling */
+	xs = kmalloc(nEXCH * sizeof(U32));
+	CHECK(xs, "kmalloc for the exchange list");
+	for (n = 0; n < nEXCH && !(e = AllocExch(&xs[n])); n++)
+		;
+	CHECK(e == ErcNoMoreExch, "out of exchanges: AllocExch gave %u", e);
+	ex_no_job("exchanges", ErcNoMoreExch);
+	x = n;
+	CHECK(SendMsg(xs[0], 1, 2) == ErcOk && CheckMsg(xs[0], m) == ErcOk && m[1] == 2,
+	      "out of exchanges: messages on an existing one failed");
+	while (n)
+		DeAllocExch(xs[--n]);
+	kfree(xs);
+	ex_snapshot();			/* the exchange table grew to its ceiling (kept) */
+	ex_recovered("exchanges");
+	kprintf("3.2: out of exchanges ok (%u allocated, ErcNoMoreExch; LoadNewJob ErcNoMoreExch)\n",
+		x);
+
+	/* link blocks: messages queued where nobody waits */
+	old = gt_limit(GT_LB, 0);
+	AllocExch(&q);
+	for (n = 0; !(e = SendMsg(q, n, 0)); n++)
+		;
+	CHECK(e == ErcNoMoreLBs, "out of link blocks: SendMsg gave %u", e);
+	CHECK(Sleep(2) == ErcOk, "out of link blocks: Sleep failed (a timer wake-up needs none)");
+	CHECK(CheckMsg(q, m) == ErcOk && m[0] == 0, "out of link blocks: the first message is lost");
+	CHECK(SendMsg(q, 1, 0) == ErcOk, "a freed link block was not reused");
+	DeAllocExch(q);			/* drops the rest */
+	gt_limit(GT_LB, old);
+	ex_recovered("link blocks");
+	kprintf("3.2: out of link blocks ok (%u messages queued, ErcNoMoreLBs; Sleep still works)\n", n);
+
+	/* request blocks: requests to a service that doesn't answer yet */
+	old = gt_limit(GT_RQB, 0);
+	AllocExch(&svc);
+	AllocExch(&resp);
+	CHECK(RegisterSvc("EXHAUST ", svc) == ErcOk, "RegisterSvc EXHAUST");
+	for (n = 0; !(e = Request("EXHAUST ", 1, resp, &h, 0, NULL, 0, NULL, 0, 0, 0, 0)); n++)
+		;
+	CHECK(e == ErcNoMoreRqBlks, "out of request blocks: Request gave %u", e);
+	CHECK(WaitMsg(svc, m) == ErcOk && Respond(m[0], 7) == ErcOk && WaitMsg(resp, m) == ErcOk &&
+	      m[1] == 7, "out of request blocks: serving one failed");
+	CHECK(Request("EXHAUST ", 1, resp, &h, 0, NULL, 0, NULL, 0, 0, 0, 0) == ErcOk,
+	      "a freed request block was not reused");
+	UnRegisterSvc("EXHAUST ");
+	DeAllocExch(svc);		/* the queued requests fail back to resp */
+	CHECK(CheckMsg(resp, m) == ErcOk && m[1] == ErcNoSuchSvc, "a dropped request was not failed");
+	DeAllocExch(resp);
+	gt_limit(GT_RQB, old);
+	ex_recovered("request blocks");
+	kprintf("3.2: out of request blocks ok (%u requests, ErcNoMoreRqBlks; the rest failed back "
+		"with ErcNoSuchSvc)\n", n);
+
+	/* timers */
+	AllocExch(&q);
+	for (n = 0; !(e = Alarm(q, 100000)); n++)
+		;
+	CHECK(e == ErcNoMoreTBs, "out of timers: Alarm gave %u", e);
+	CHECK(Sleep(1) == ErcNoMoreTBs, "out of timers: Sleep did not report it");
+	KillAlarm(q);
+	CHECK(Sleep(1) == ErcOk, "Sleep after KillAlarm");
+	DeAllocExch(q);
+	ex_recovered("timers");
+	kprintf("3.2: out of timers ok (%u alarms, ErcNoMoreTBs; Sleep reports it)\n", n);
+
+	/* tasks: a program starts them until there are no more */
+	old = gt_limit(GT_TASKS, 0);
+	job = run("taskhog");
+	for (t = 0; t < 3000 && !svc_registered("TASKHOG "); t++)
+		Sleep(1);
+	CHECK(svc_registered("TASKHOG "), "taskhog did not finish starting tasks");
+	n = job_task_count(job);
+	ex_no_job("tasks", ErcNoMoreTSSs);
+	CHECK(KillJob(job) == ErcOk, "KillJob(taskhog)");
+	for (t = 0; t < 500 && job_task_count(job); t++)
+		Sleep(1);
+	Sleep(2);			/* let the zombies be reaped */
+	gt_limit(GT_TASKS, old);
+	ex_recovered("tasks");
+	kprintf("3.2: out of tasks ok (taskhog had %u tasks, then ErcNoMoreTSSs; LoadNewJob too)\n", n);
+
+	/* open files */
+	old = gt_limit(GT_FILES, 0);
+	for (n = 0; n < ARRAY_SIZE(fh) && !(e = OpenFile(S("C:\\HELLO.TXT"), ModeRead, 1, &fh[n])); n++)
+		;
+	CHECK(e == ErcNoFreeFCB, "out of files: OpenFile gave %u after %u", e, n);
+	x = n;
+	while (n)
+		CloseFile(fh[--n]);
+	CHECK(OpenFile(S("C:\\HELLO.TXT"), ModeRead, 1, &fh[0]) == ErcOk && CloseFile(fh[0]) == ErcOk,
+	      "OpenFile after closing");
+	gt_limit(GT_FILES, old);
+	ex_recovered("open files");
+	kprintf("3.2: out of open files ok (%u open, ErcNoFreeFCB)\n", x);
+	kprintf("3.2: resource exhaustion ok\n");
+}
+
 static __attribute__((noinline)) U64 recurse(U64 n)
 {
 	volatile U8 buf[256];
@@ -2209,6 +2410,7 @@ void selftest_run(bool full)
 	test_fat_read();
 	test_fat_write();
 	test_fs_jobs();
+	test_exhaust();
 
 	test_ext4_read();
 	test_ext4_write();

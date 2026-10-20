@@ -154,5 +154,9 @@ The matching service is in [chapter 7](07-programming.md#writing-a-service).
 | named services | 64 |
 | pending timers | 64 |
 
+A message to an exchange where a task is waiting goes straight to that task and needs no link
+block; only queued messages use them. So a timer or a reply still wakes its task when the link blocks
+are used up.
+
 When a pool is empty (a growing one: at its ceiling or out of memory), the call returns `ErcNoMoreExch`, `ErcNoMoreLBs`, `ErcNoMoreRqBlks`,
 `ErcOutOfSvcDesc` or `ErcNoMoreTBs`. The monitor's `tasks` command shows the free counts.

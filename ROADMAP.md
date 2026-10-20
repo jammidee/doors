@@ -72,7 +72,7 @@ Other operating systems stay stable because every change is tested automatically
 | Step | What | Done when |
 |---|---|---|
 | 3.1 | **Kernel heap** (`kmalloc`) and growable tables instead of fixed arrays (jobs, tasks, exchanges, request blocks, open files) ✅ (1.11.0) | Limits come from memory, not compile-time constants; the soak test runs 1,000 jobs ✅ (`make test` runs 1,000 jobs at once, three times, with no leaks; the soak test itself waits for 3.4) |
-| 3.2 | **Resource exhaustion**: every "out of X" path returns its MMURTL error and leaves the system working | A test exhausts each resource in turn (pages, exchanges, link blocks, RQBs, timers, tasks, files) and the system recovers |
+| 3.2 | **Resource exhaustion**: every "out of X" path returns its MMURTL error and leaves the system working ✅ (1.12.0) | A test exhausts each resource in turn (pages, exchanges, link blocks, RQBs, timers, tasks, files) and the system recovers ✅ (`test_exhaust` in `make test`: each one used up, the right error, a new job fails cleanly, every count back, `hello` runs) |
 | 3.3 | **Per-job limits**: no single program can take all memory or all exchanges | The fuzzer at full speed can't starve the monitor or the CLIs |
 | 3.4 | **Service robustness**: requests can time out, and a service that crashes (FILESYS, KEYBOARD, a user service) is restarted or reported, not left hanging its clients | Killing a service mid-request gives its clients an error, not a hang |
 | 3.5 | **Watchdog**: detects a task that holds the CPU at high priority or a kernel stuck with interrupts off | A runaway priority-1 task is reported and can be killed from the monitor |

@@ -37,10 +37,11 @@ struct task {
 	U8  priority;			/* 0 = highest .. 31 */
 	U8  state;			/* enum task_state */
 	U8  fdebug;			/* MMURTL TSS_TrapBit: start under the debugger (later) */
+	U8  msg_type;			/* type of msg[] (LB_DATA, ...) */
 	U32 exch;			/* MMURTL TSS_Exch: the task's own exchange (M5) */
 	struct addr_space *space;
 	U64 stack_lo, stack_hi;		/* kernel stack (stack_lo = lowest mapped byte) */
-	void *lb_ret;			/* MMURTL pLBRet: link block delivered to a waiting task */
+	U64 msg[2];			/* MMURTL pLBRet: the message handed to a waiting task (no link block) */
 	erc_t wait_erc;			/* non-zero: the wait ended without a message (exchange freed) */
 	bool own_exch;			/* exch was allocated for this task (freed when it ends) */
 	U32 wait_exch;			/* TASK_BLOCKED: the exchange it waits at */

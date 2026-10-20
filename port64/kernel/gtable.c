@@ -85,3 +85,16 @@ void gt_report(void)
 			kprintf("  %-14s %6u entries (ceiling %6u), %4lu KB\n", all[i]->name, all[i]->n,
 				all[i]->max, all[i]->pages * 4);
 }
+
+/* Tests only (ROADMAP 3.2): set a table's ceiling, never below the entries it has, so a test can
+   fill it quickly; returns the old ceiling, to put back. */
+U32 gt_limit(enum gt_slot slot, U32 max)
+{
+	struct gtable *t = all[slot];
+	U64 f = irq_save();
+	U32 old = t->max;
+
+	t->max = max < t->n ? t->n : max;
+	irq_restore(f);
+	return old;
+}

@@ -12,6 +12,16 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.12.0 — 2026-10-21 — resource exhaustion
+- **`make test` uses up each resource in turn** (ROADMAP 3.2): pages, exchanges, link blocks,
+  request blocks, timers, tasks and open files. While a resource is gone, the call returns MMURTL's
+  error and a new job fails cleanly with it. Afterwards every count is back and a program runs again.
+- **Fix:** a message for an exchange where a task is already waiting now goes straight to that task,
+  without a link block. Before, a timer wake-up or a reply could be lost when link blocks ran out,
+  and the task would wait forever. Only queued messages use link blocks now.
+- Exchanges are found from a low-water mark instead of from exchange 1 each time.
+- New program `taskhog`. New `gt_limit()`, for tests only, lowers a table's ceiling.
+
 ## 1.11.0 — 2026-10-21 — growable kernel tables, kernel heap
 - **Growable tables** (ROADMAP 3.1, `kernel/gtable.c`): jobs, tasks, exchanges, link blocks,
   request blocks, open files, address spaces, screens and key buffers are no longer fixed arrays.

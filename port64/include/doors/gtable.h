@@ -34,5 +34,6 @@ void gt_init(struct gtable *t, const char *name, enum gt_slot slot, U32 esize, U
 bool gt_grow(struct gtable *t, U32 want);
 U64  gt_pages_total(void);		/* pages all tables hold (leak checks count them as free) */
 void gt_report(void);			/* the monitor's tables: name, entries, ceiling, KB */
+U32  gt_limit(enum gt_slot slot, U32 max);	/* tests: lower a ceiling (0: to the current size) */
 
 #endif
