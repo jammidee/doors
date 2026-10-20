@@ -407,6 +407,20 @@ erc_t SetCmdLine(const char *pCmd, U32 dcbCmd)
 	return ErcOk;
 }
 
+/* The kernel sets another job's command line (kernel/soak.c, before the job runs). */
+erc_t job_set_cmdline(U32 job, const char *cmd)
+{
+	U32 n = (U32)strlen(cmd);
+
+	if (job < FIRST_USER_JOB || job >= MAX_JOBS || !jobs[job].used)
+		return ErcBadJobNum;
+	if (n > sizeof(jobs[job].cmdline) - 1)
+		n = sizeof(jobs[job].cmdline) - 1;
+	memset(jobs[job].cmdline, 0, sizeof(jobs[job].cmdline));
+	memcpy(jobs[job].cmdline, cmd, n);
+	return ErcOk;
+}
+
 erc_t GetCmdLine(char *pCmdRet, U32 *pdcbCmdRet)
 {
 	struct job *j = &jobs[current->job];

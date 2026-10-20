@@ -20,4 +20,7 @@ void qemu_exit(U8 code);
    every volume to 100 % and back (make fulltest, kernel command line "test full"). */
 NORETURN void selftest_run(bool full);
 
+/* Soak test (kernel/soak.c, make soak): kernel command line "soak minutes=M [seed=S]". */
+NORETURN void soak_run(const char *cmdline);
+
 #endif

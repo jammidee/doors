@@ -394,6 +394,8 @@ void kmain(U32 magic, U64 mbi_phys)
 		powercut_run(boot_info.cmdline);
 	if (cmdline_has(boot_info.cmdline, "pccheck"))
 		powercut_check(boot_info.cmdline);
+	if (cmdline_has(boot_info.cmdline, "soak"))			/* tools/soak.py */
+		soak_run(boot_info.cmdline);
 	kbd_service_start();		/* before INITIAL.JOB: its programs may read the keyboard */
 	kprintf("Boot modules: %u\n", boot_info.nmods);
 	job_load_initial();	/* programs listed in INITIAL.JOB, as MMURTL's Monitor did */

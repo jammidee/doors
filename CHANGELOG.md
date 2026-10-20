@@ -12,6 +12,17 @@ with the git commit it was built from (`-dirty` means it has uncommitted changes
 - After 1.0.0: MINOR for new features, PATCH for fixes. MAJOR changes only if the MMURTL-compatible
   API ever has to break.
 
+## 1.10.1 — 2026-10-21 — soak test (unfinished)
+- **`make soak SOAK_MINUTES=M`** (ROADMAP 2.3, unfinished): in rounds, the kernel supervisor
+  (`kernel/soak.c`, kernel command line `soak`) starts a random mix of programs and stops some of
+  them partway through. It checks the kernel's invariants each round and its resource counts
+  every 10 rounds. Afterwards the host checks the disk.
+- **`churn`**, a new program: file work on FAT and ext4 with every read verified, plus memory and
+  messages. Its seed comes from its command line (kernel `job_set_cmdline`).
+- **Open bug, found by the first run:** stopping a program while FILESYS serves its request can
+  crash FILESYS (a page fault in `fsys_task`). `make soak` is therefore not in CI yet; the fix
+  belongs to ROADMAP 3.4.
+
 ## 1.10.0 — 2026-10-19 — test coverage
 - **`make coverage`:** `make test` with a second kernel whose basic blocks mark themselves
   (`-fsanitize-coverage=trace-pc`, `kernel/cov.c`). `tools/coverage.py` turns that into line

@@ -134,7 +134,7 @@ TEST_ARGS := \
 	--send "M9: type ed3=Edited in DOORS{alt-s}{alt-q}" \
 	--send "M9: type cli3=dir C:\T9\nexit\n"
 
-.PHONY: all run run-ext4 console test fulltest smoke powercut fuzz analyze crashtest coverage debug clean FORCE
+.PHONY: all run run-ext4 console test fulltest smoke powercut fuzz analyze crashtest coverage soak debug clean FORCE
 # Keep object files that make would otherwise treat as intermediate and delete (user/lib, user/progs).
 .SECONDARY:
 
@@ -305,6 +305,14 @@ $(BUILD)/doors-crash-%.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB
 	$(call mkiso,$@,crash=$*)
 crashtest: $(CRASH_ISOS) $(ISO) $(USER_ELFS)
 	python3 tools/crashtest.py
+
+# Soak test (ROADMAP 2.3): a random mix of programs, killed at random, for SOAK_MINUTES; counts and
+# invariants checked as it runs, the disk checked by Linux afterwards (tools/soak.py)
+SOAK_MINUTES ?= 5
+$(BUILD)/doors-soak.iso: $(KERNEL) $(USER_ELFS) user/INITIAL.JOB FORCE
+	$(call mkiso,$@,soak minutes=$(SOAK_MINUTES))
+soak: $(BUILD)/doors-soak.iso $(USER_ELFS)
+	python3 tools/soak.py $(SOAK_MINUTES)
 
 # Test coverage (ROADMAP 2.6): make test with a kernel whose basic blocks record themselves
 # (kernel/cov.c, built without the instrumentation), then tools/coverage.py maps them to source

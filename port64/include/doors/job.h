@@ -38,6 +38,7 @@ struct job {
 void job_init(void);
 const struct job *job_get(U32 job);
 void job_load_initial(void);			/* INITIAL.JOB module: start the programs it lists */
+erc_t job_set_cmdline(U32 job, const char *cmd);	/* another job's (kernel/soak.c) */
 NORETURN void job_fault(struct regs *r, U32 vector);	/* user-mode CPU exception */
 
 /* ---- MMURTL calls (MJOB.H), same names and parameter order ---- */
